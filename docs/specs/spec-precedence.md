@@ -10,6 +10,10 @@ When artifacts overlap, precedence is:
 
 For this repository, canonical executable sources are:
 
+- `.specify/memory/constitution.md`
+- `specs/001-llmproxy-foundation/spec.md`
+- `specs/001-llmproxy-foundation/plan.md`
+- `specs/001-llmproxy-foundation/tasks.md`
 - `docs/contracts/openapi.yaml`
 - `docs/contracts/schemas/*.json`
 - `alembic/versions/*.py`

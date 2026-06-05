@@ -1,14 +1,10 @@
 # llmProxy
 
-This repository is currently in the specification phase for a spec-driven development project.
+This repository is currently in the specification phase for a SpecKit-aligned, spec-driven development project.
 
-The primary implementation baseline is documented in:
+The primary implementation baseline is documented through the SpecKit-aligned core artifacts in [specs/001-llmproxy-foundation](./specs/001-llmproxy-foundation) and the extended reference library in [docs/specs](./docs/specs/README.md).
 
-- [Spec Pack](/Volumes/data/development/llmProxy/docs/specs/README.md)
-
-Initial source material:
-
-- [baseline.txt](/Volumes/data/development/llmProxy/baseline.txt)
+Initial source material is [baseline.txt](./baseline.txt).
 
 Future coding agents should begin with the documents in `docs/specs/` before starting implementation.
 
@@ -18,4 +14,4 @@ Future coding agents should begin with the documents in `docs/specs/` before sta
 
 ## License
 
-This repository is licensed under the Apache License, Version 2.0. See [LICENSE](/Volumes/data/development/llmProxy/LICENSE).
+This repository is licensed under the Apache License, Version 2.0. See [LICENSE](./LICENSE).

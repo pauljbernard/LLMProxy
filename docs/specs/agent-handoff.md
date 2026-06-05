@@ -2,13 +2,19 @@
 
 ## Purpose
 
-This document is for future coding agents that will implement the proxy from the spec pack in this repository.
+This document is for future coding agents that will implement the proxy from the SpecKit in this repository.
 
 ## Required Inputs
 
 Before implementation, treat these documents as the primary source of truth:
 
-- `docs/specs/constitution.md`
+- `.specify/memory/constitution.md`
+- `specs/001-llmproxy-foundation/spec.md`
+- `specs/001-llmproxy-foundation/plan.md`
+- `specs/001-llmproxy-foundation/tasks.md`
+- `specs/001-llmproxy-foundation/research.md`
+- `specs/001-llmproxy-foundation/data-model.md`
+- `specs/001-llmproxy-foundation/quickstart.md`
 - `docs/specs/requirements.md`
 - `docs/specs/system-specification.md`
 - `docs/specs/data-contracts.md`
@@ -120,7 +126,7 @@ That slice should produce a usable minimal runtime proxy before ensemble, traini
 - Do not export records that are rejected, blocked, or secret-bearing.
 - Do not hide routing decisions; persist enough metadata to audit behavior.
 - Do not collapse the entire baseline into one giant module or one giant prompt.
-- Do not improvise beyond the repository, API, DB, metrics, and routing standards defined in this spec pack.
+- Do not improvise beyond the repository, API, DB, metrics, and routing standards defined in this SpecKit.
 
 ## Deliverable Shape
 
@@ -136,4 +142,4 @@ Future implementation work should leave behind:
 
 ## Handoff Completion Standard
 
-An implementation handoff is considered successful when a coding agent can start Phase 1 directly from this spec pack without needing to reinterpret the project’s purpose, architecture, contracts, or delivery order.
+An implementation handoff is considered successful when a coding agent can start Phase 1 directly from this SpecKit without needing to reinterpret the project’s purpose, architecture, contracts, or delivery order.

@@ -7,13 +7,16 @@ This document defines the required reading order for implementation agents so cr
 ## Mandatory Read Order For All Implementation Work
 
 1. `docs/specs/spec-precedence.md`
-2. `docs/specs/constitution.md`
-3. `docs/specs/agent-handoff.md`
-4. `docs/specs/repository-standard.md`
-5. `docs/specs/implementation-charter.md`
-6. `docs/specs/requirements.md`
-7. `docs/specs/system-specification.md`
-8. `docs/specs/acceptance-criteria.md`
+2. `.specify/memory/constitution.md`
+3. `specs/001-llmproxy-foundation/spec.md`
+4. `specs/001-llmproxy-foundation/plan.md`
+5. `specs/001-llmproxy-foundation/tasks.md`
+6. `docs/specs/agent-handoff.md`
+7. `docs/specs/repository-standard.md`
+8. `docs/specs/implementation-charter.md`
+9. `docs/specs/requirements.md`
+10. `docs/specs/system-specification.md`
+11. `docs/specs/acceptance-criteria.md`
 
 ## Mandatory Contract Read Order
 

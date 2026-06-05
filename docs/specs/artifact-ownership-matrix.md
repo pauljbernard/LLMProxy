@@ -6,6 +6,10 @@ This matrix identifies the primary source of truth for each concern so overlappi
 
 | Concern | Primary Source of Truth | Secondary References |
 |---|---|---|
+| project constitution | `.specify/memory/constitution.md` | `docs/specs/constitution.md` |
+| feature specification | `specs/001-llmproxy-foundation/spec.md` | `docs/specs/requirements.md` |
+| feature plan | `specs/001-llmproxy-foundation/plan.md` | `docs/specs/implementation-plan.md` |
+| feature tasks | `specs/001-llmproxy-foundation/tasks.md` | `docs/specs/phase-1-implementation-checklist.md` |
 | repo structure | `repository-standard.md` | `implementation-charter.md` |
 | implementation behavior constraints | `implementation-charter.md` | `agent-handoff.md` |
 | API endpoint contract | `docs/contracts/openapi.yaml` | `api-schema-spec.md` |

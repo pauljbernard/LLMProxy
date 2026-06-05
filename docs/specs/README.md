@@ -1,8 +1,8 @@
-# LLM Proxy Spec Pack
+# LLM Proxy SpecKit Reference Library
 
-This project is being run as a spec-driven development effort.
+This project is being run as a SpecKit-aligned, spec-driven development effort.
 
-The documents in this directory are the authoritative planning and handoff artifacts for the first implementation of the local-first LLM proxy and learner system.
+The documents in this directory are the extended reference artifacts that elaborate the core SpecKit workflow artifacts under `specs/` and `.specify/`.
 
 ## Document Set
 
@@ -15,7 +15,7 @@ The documents in this directory are the authoritative planning and handoff artif
 - `economics-and-kpis.md`: measurable cost, performance, and learning-loop success metrics
 - `metrics-spec.md`: canonical KPI formulas, event sources, and reporting rules
 - `domain-specialization-plan.md`: initial specialization domains, benchmark strategy, and promotion criteria for local specialists
-- `glossary.md`: canonical terminology used across the spec pack
+- `glossary.md`: canonical terminology used across the SpecKit
 - `repository-standard.md`: mandatory repository layout, module boundaries, and naming rules
 - `implementation-charter.md`: anti-improvisation execution rules for coding agents
 - `api-schema-spec.md`: canonical API request/response shapes for the first implementation
@@ -91,8 +91,8 @@ The repository now includes concrete starter artifacts intended to outrank prose
 
 ## Source of Truth
 
-The initial baseline for this spec pack is:
+The initial baseline for this SpecKit is:
 
 - `/Volumes/data/development/llmProxy/baseline.txt`
 
-If these documents drift from `baseline.txt`, the spec pack should be treated as the current working source of truth after explicit review.
+If these documents drift from `baseline.txt`, the SpecKit should be treated as the current working source of truth after explicit review.
