@@ -63,6 +63,23 @@ Required columns:
 - `cost_estimate`
 - `finish_reason`
 - `response_json`
+- `response_role`
+- `created_at`
+
+### `proxy.judge_critique`
+
+Required columns:
+
+- `id`
+- `request_log_id`
+- `routing_decision_id`
+- `judge_provider`
+- `judge_model`
+- `selected_provider`
+- `selected_model`
+- `selected_response_id`
+- `critique_json`
+- `synthesized_response`
 - `created_at`
 
 ### `proxy.training_candidate`
@@ -133,6 +150,20 @@ Required columns:
 - `status`
 - `record_count`
 - `quarantined_count`
+- `created_at`
+
+### `learner.dataset_version`
+
+Required columns:
+
+- `id`
+- `domain`
+- `version_name`
+- `source_import_id`
+- `train_path`
+- `validation_path`
+- `test_path`
+- `record_count`
 - `created_at`
 
 ### `learner.dataset_version`

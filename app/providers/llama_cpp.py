@@ -1,4 +1,4 @@
-"""llama.cpp provider stub."""
+"""llama.cpp local-runtime provider."""
 
 from app.providers.ollama import OllamaProvider
 

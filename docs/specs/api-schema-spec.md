@@ -134,6 +134,122 @@ Minimum canonical fields:
 }
 ```
 
+## Native Teacher Ensemble Endpoint
+
+Endpoint:
+
+- `POST /proxy/ensemble`
+
+Request shape:
+
+- identical to the canonical `POST /v1/chat/completions` request
+- `model` should be `proxy-ensemble` or a teacher-oriented alias
+
+Minimum response shape:
+
+```json
+{
+  "response": {
+    "id": "chatcmpl_123",
+    "object": "chat.completion",
+    "created": 1780651200,
+    "model": "proxy-ensemble",
+    "choices": [],
+    "usage": {}
+  },
+  "teacher_candidates": [
+    {
+      "response_id": "resp_1",
+      "provider": "anthropic",
+      "provider_family": "Anthropic",
+      "model": "claude-3-5-sonnet",
+      "content": "string",
+      "score": 0.95,
+      "rationale": "string"
+    }
+  ],
+  "judge_critique": {
+    "judge_provider": "rule_based_judge",
+    "judge_model": "heuristic-v1",
+    "selected_response_id": "resp_1",
+    "selected_provider": "anthropic",
+    "selected_model": "claude-3-5-sonnet",
+    "rationale": "string",
+    "scores": {
+      "resp_1": 0.98
+    }
+  }
+}
+```
+
+## Training Candidate Review Endpoints
+
+Endpoints:
+
+- `GET /proxy/training-candidates`
+- `POST /proxy/training-candidates/{id}/approve`
+- `POST /proxy/training-candidates/{id}/reject`
+
+Representative list item:
+
+```json
+{
+  "id": "cand_123",
+  "request_log_id": "req_123",
+  "routing_decision_id": "route_123",
+  "session_id": "sess_123",
+  "domain": "coding",
+  "task_type": "code_review",
+  "status": "needs_review",
+  "quality_score": 0.86,
+  "approval_status": "needs_review",
+  "export_eligible": false,
+  "selected_response": "string",
+  "metadata": {
+    "selected_provider": "ollama",
+    "selected_model": "qwen2.5-coder:14b"
+  }
+}
+```
+
+Representative approve/reject response:
+
+```json
+{
+  "candidate_id": "cand_123",
+  "status": "approved",
+  "approval_status": "approved",
+  "export_eligible": true
+}
+```
+
+## Dataset Export Endpoint
+
+Endpoint:
+
+- `POST /proxy/export/jsonl`
+
+Request shape:
+
+```json
+{
+  "domain": "coding",
+  "name": "coding-adapter",
+  "min_quality_score": 0.5
+}
+```
+
+Response shape:
+
+```json
+{
+  "dataset_export_id": "dsexp_123",
+  "manifest_path": "/data/exports/coding-adapter-dsexp_123.manifest.json",
+  "data_path": "/data/exports/coding-adapter-dsexp_123.jsonl",
+  "record_count": 12
+}
+```
+
 ## Dataset Import Request
 
 Endpoint:
@@ -147,6 +263,230 @@ Request shape:
   "dataset_export_id": "dsexp_123",
   "manifest_path": "/proxy_exports/domain.manifest.json",
   "data_path": "/proxy_exports/domain.jsonl"
+}
+```
+
+Representative import response:
+
+```json
+{
+  "dataset_export_id": "dsexp_123",
+  "dataset_import_id": "dsimp_123",
+  "dataset_version_id": "dsv_123",
+  "status": "imported",
+  "record_count": 42
+}
+```
+
+## Training Run Endpoints
+
+Endpoints:
+
+- `POST /training/runs`
+- `GET /training/runs`
+
+Training submission request shape:
+
+```json
+{
+  "dataset_version_id": "dsv_123",
+  "base_model": "Qwen/Qwen2.5-Coder-7B-Instruct",
+  "training_mode": "lora",
+  "epochs": 3,
+  "learning_rate": 0.0002,
+  "adapter_name": "coding-lora-v1"
+}
+```
+
+Training submission response shape:
+
+```json
+{
+  "training_run_id": "train_123",
+  "dataset_version_id": "dsv_123",
+  "training_mode": "lora",
+  "status": "completed",
+  "artifact_path": "/data/checkpoints/train_123/adapter-lora.bin",
+  "metrics": {
+    "loss": 0.18,
+    "epochs": 3,
+    "learning_rate": 0.0002,
+    "mode": "lora",
+    "checkpoint_path": "/data/checkpoints/train_123/checkpoint-lora.txt",
+    "log_path": "/data/checkpoints/train_123/training.log",
+    "metrics_path": "/data/checkpoints/train_123/metrics.json"
+  }
+}
+```
+
+Representative training run list item:
+
+```json
+{
+  "id": "train_123",
+  "dataset_version_id": "dsv_123",
+  "base_model": "Qwen/Qwen2.5-Coder-7B-Instruct",
+  "training_mode": "lora",
+  "status": "completed",
+  "artifact_path": "/data/checkpoints/train_123/adapter-lora.bin",
+  "metrics": {
+    "loss": 0.18,
+    "epochs": 3,
+    "learning_rate": 0.0002,
+    "mode": "lora"
+  }
+}
+```
+
+## Evaluation Run Endpoints
+
+Endpoints:
+
+- `POST /evaluation/runs`
+- `GET /evaluation/runs`
+
+Evaluation submission request shape:
+
+```json
+{
+  "training_run_id": "train_123",
+  "frontier_baseline_name": "claude-3-5-sonnet"
+}
+```
+
+Evaluation submission response shape:
+
+```json
+{
+  "evaluation_run_id": "eval_123",
+  "training_run_id": "train_123",
+  "domain": "coding",
+  "frontier_baseline_name": "claude-3-5-sonnet",
+  "overall_score": 0.9,
+  "quality_delta_vs_frontier": 0.02,
+  "value_per_dollar_gain_vs_frontier": 4.1,
+  "promotion_status": "approved",
+  "package_manifest_path": "/data/models/train_123/model-package.json",
+  "result": {
+    "promotion_status": "approved",
+    "gate_failures": []
+  }
+}
+```
+
+Representative evaluation run list item:
+
+```json
+{
+  "id": "eval_123",
+  "training_run_id": "train_123",
+  "domain": "coding",
+  "frontier_baseline_name": "claude-3-5-sonnet",
+  "overall_score": 0.9,
+  "quality_delta_vs_frontier": 0.02,
+  "value_per_dollar_gain_vs_frontier": 4.1,
+  "promotion_status": "approved",
+  "package_manifest_path": "/data/models/train_123/model-package.json"
+}
+```
+
+## KPI Report Endpoint
+
+Endpoint:
+
+- `GET /evaluation/kpis`
+
+Representative response:
+
+```json
+{
+  "report_path": "/data/reports/kpi-report-latest.json",
+  "metrics": [
+    {
+      "time_window": "all_time",
+      "metric_name": "avoided_frontier_spend",
+      "metric_value": 0.1192,
+      "formula_version": "1.0",
+      "policy_version": "rpol_123",
+      "sample_size": 1,
+      "currency": "USD",
+      "estimation_flag": true
+    }
+  ]
+}
+```
+
+## Local Model Registry Endpoint
+
+Endpoint:
+
+- `GET /models/local`
+
+Representative list item:
+
+```json
+{
+  "model_registry_id": "model_train_123",
+  "model_alias": "coding-lora-train_123",
+  "base_model": "Qwen/Qwen2.5-Coder-7B-Instruct",
+  "adapter_type": "lora",
+  "artifact_paths": ["/data/checkpoints/train_123/adapter-lora.bin"],
+  "domains": ["coding"],
+  "promotion_status": "approved"
+}
+```
+
+## Deployment Endpoints
+
+Endpoints:
+
+- `POST /deployment/models/{model_alias}/activate`
+- `POST /deployment/models/{model_alias}/rollback`
+- `GET /deployment/routing-policies`
+
+Deployment activation request shape:
+
+```json
+{
+  "deployment_mode": "production",
+  "domains": ["coding"],
+  "task_types": ["code_review"],
+  "canary_percent": 1.0
+}
+```
+
+Deployment response shape:
+
+```json
+{
+  "model_alias": "coding-lora-v1",
+  "deployment_mode": "production",
+  "status": "deployed",
+  "policy_version": "rpol_123",
+  "runtime": "ollama",
+  "endpoint_url": "http://localhost:11434"
+}
+```
+
+Representative routing policy list item:
+
+```json
+{
+  "id": "rpol_123",
+  "policy_version": "rpol_123",
+  "policy": {
+    "entries": [
+      {
+        "model_alias": "coding-lora-v1",
+        "deployment_mode": "production",
+        "runtime": "ollama",
+        "provider_key": "local:coding-lora-v1",
+        "domains": ["coding"],
+        "task_types": ["code_review"],
+        "canary_percent": 0.0
+      }
+    ]
+  }
 }
 ```
 

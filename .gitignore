@@ -19,3 +19,5 @@ build/
 *.tfstate
 *.tfstate.*
 crash.log
+logs/
+openai-api.key

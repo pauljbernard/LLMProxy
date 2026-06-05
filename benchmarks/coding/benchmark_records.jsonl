@@ -1,0 +1,2 @@
+{"benchmark_id":"coding-1","domain":"coding","task_type":"code_review","prompt":"Review a small bug fix patch.","reference_answer":"Identify correctness and safety issues.","rubric":{"correctness":0.5,"safety":0.5}}
+{"benchmark_id":"coding-2","domain":"coding","task_type":"bug_fix","prompt":"Produce a minimal bug fix.","reference_answer":"Return a bounded patch.","rubric":{"accuracy":0.6,"minimality":0.4}}

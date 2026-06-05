@@ -1,0 +1,2 @@
+{"benchmark_id":"style-1","domain":"writing_style","task_type":"rewrite","prompt":"Rewrite a paragraph in a warmer tone.","reference_answer":"Improved warm-toned prose.","rubric":{"tone":0.5,"clarity":0.5}}
+{"benchmark_id":"style-2","domain":"writing_style","task_type":"editing","prompt":"Edit a note for concision.","reference_answer":"Concise polished output.","rubric":{"brevity":0.5,"clarity":0.5}}

@@ -9,9 +9,19 @@ paths:
       responses:
         "200":
           description: OK
+  /v1/models:
+    get:
+      summary: List available proxy and routed models
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Model list
   /v1/chat/completions:
     post:
       summary: OpenAI-compatible chat completions
+      security:
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -25,9 +35,155 @@ paths:
             application/json:
               schema:
                 $ref: "./schemas/chat-completion-response.schema.json"
+  /v1/embeddings:
+    post:
+      summary: OpenAI-compatible embeddings
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - model
+                - input
+              properties:
+                model:
+                  type: string
+                input:
+                  oneOf:
+                    - type: string
+                    - type: array
+                      items:
+                        type: string
+      responses:
+        "200":
+          description: Embedding response
+  /proxy/ensemble:
+    post:
+      summary: Multi-teacher ensemble execution
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "./schemas/chat-completion-request.schema.json"
+      responses:
+        "200":
+          description: Synthesized ensemble response
+  /proxy/training-candidates:
+    get:
+      summary: List captured training candidates
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Candidate list
+  /proxy/training-candidates/{candidate_id}/approve:
+    post:
+      summary: Approve a training candidate
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: candidate_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Candidate approved
+  /proxy/training-candidates/{candidate_id}/reject:
+    post:
+      summary: Reject a training candidate
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: candidate_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Candidate rejected
+  /proxy/export/jsonl:
+    post:
+      summary: Export approved training candidates as JSONL plus manifest
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Export completed
+  /proxy/models/register:
+    post:
+      summary: Register a local model package with the proxy
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - model_registry_id
+                - model_alias
+                - base_model
+                - adapter_type
+                - adapter_path
+                - runtime
+                - endpoint_url
+                - domains
+                - task_types
+                - status
+              properties:
+                model_registry_id:
+                  type: string
+                model_alias:
+                  type: string
+                base_model:
+                  type: string
+                adapter_type:
+                  type: string
+                adapter_path:
+                  type: string
+                runtime:
+                  type: string
+                endpoint_url:
+                  type: string
+                domains:
+                  type: array
+                  items:
+                    type: string
+                task_types:
+                  type: array
+                  items:
+                    type: string
+                quality:
+                  type: object
+                status:
+                  type: string
+                created_at:
+                  type: string
+      responses:
+        "200":
+          description: Model registration completed
   /datasets/import:
     post:
       summary: Import dataset export
+      security:
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -37,3 +193,149 @@ paths:
       responses:
         "200":
           description: Accepted
+  /training/runs:
+    post:
+      summary: Submit a training run
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - dataset_version_id
+                - base_model
+                - training_mode
+              properties:
+                dataset_version_id:
+                  type: string
+                base_model:
+                  type: string
+                training_mode:
+                  type: string
+                  enum: [lora, qlora]
+                epochs:
+                  type: integer
+                learning_rate:
+                  type: number
+                adapter_name:
+                  type: string
+      responses:
+        "200":
+          description: Training run accepted
+    get:
+      summary: List training runs
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Training run list
+  /evaluation/runs:
+    post:
+      summary: Submit an evaluation run
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - training_run_id
+              properties:
+                training_run_id:
+                  type: string
+                frontier_baseline_name:
+                  type: string
+      responses:
+        "200":
+          description: Evaluation run completed
+    get:
+      summary: List evaluation runs
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Evaluation run list
+  /evaluation/kpis:
+    get:
+      summary: Generate and return the current KPI report
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: KPI report
+  /models/local:
+    get:
+      summary: List locally registered model packages
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Local model package list
+  /deployment/models/{model_alias}/activate:
+    post:
+      summary: Activate a local model package into shadow, canary, or production routing
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: model_alias
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - deployment_mode
+              properties:
+                deployment_mode:
+                  type: string
+                  enum: [shadow, canary, production]
+                domains:
+                  type: array
+                  items:
+                    type: string
+                task_types:
+                  type: array
+                  items:
+                    type: string
+                canary_percent:
+                  type: number
+      responses:
+        "200":
+          description: Deployment activation completed
+  /deployment/models/{model_alias}/rollback:
+    post:
+      summary: Roll back an active local model package
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: model_alias
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Rollback completed
+  /deployment/routing-policies:
+    get:
+      summary: List persisted routing policy versions
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Routing policy version list
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer

@@ -1,4 +1,4 @@
-"""MLX provider stub."""
+"""MLX local-runtime provider."""
 
 from app.providers.ollama import OllamaProvider
 
