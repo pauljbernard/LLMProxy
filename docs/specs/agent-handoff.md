@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document is for future coding agents that will implement the proxy from the SpecKit in this repository.
+This document is for future coding agents that will implement the proxy from the specification set in this repository.
 
 ## Required Inputs
 
@@ -126,7 +126,7 @@ That slice should produce a usable minimal runtime proxy before ensemble, traini
 - Do not export records that are rejected, blocked, or secret-bearing.
 - Do not hide routing decisions; persist enough metadata to audit behavior.
 - Do not collapse the entire baseline into one giant module or one giant prompt.
-- Do not improvise beyond the repository, API, DB, metrics, and routing standards defined in this SpecKit.
+- Do not improvise beyond the repository, API, DB, metrics, and routing standards defined in this specification set.
 
 ## Deliverable Shape
 
@@ -142,4 +142,4 @@ Future implementation work should leave behind:
 
 ## Handoff Completion Standard
 
-An implementation handoff is considered successful when a coding agent can start Phase 1 directly from this SpecKit without needing to reinterpret the project’s purpose, architecture, contracts, or delivery order.
+An implementation handoff is considered successful when a coding agent can start Phase 1 directly from this specification set without needing to reinterpret the project’s purpose, architecture, contracts, or delivery order.

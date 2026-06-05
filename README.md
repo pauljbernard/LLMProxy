@@ -1,8 +1,8 @@
 # llmProxy
 
-This repository is currently in the specification phase for a SpecKit-aligned, spec-driven development project.
+This repository is currently in the specification phase for a SpecKit-inspired, spec-driven development project.
 
-The primary implementation baseline is documented through the SpecKit-aligned core artifacts in [specs/001-llmproxy-foundation](./specs/001-llmproxy-foundation) and the extended reference library in [docs/specs](./docs/specs/README.md).
+The primary implementation baseline is documented through a custom SpecKit-aligned specification set in [specs/001-llmproxy-foundation](./specs/001-llmproxy-foundation) and the extended reference library in [docs/specs](./docs/specs/README.md).
 
 Initial source material is [baseline.txt](./baseline.txt).
 
