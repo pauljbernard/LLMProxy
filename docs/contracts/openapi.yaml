@@ -1,0 +1,39 @@
+openapi: 3.1.0
+info:
+  title: llmProxy API
+  version: 0.1.0
+paths:
+  /health:
+    get:
+      summary: Health check
+      responses:
+        "200":
+          description: OK
+  /v1/chat/completions:
+    post:
+      summary: OpenAI-compatible chat completions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "./schemas/chat-completion-request.schema.json"
+      responses:
+        "200":
+          description: Chat completion response
+          content:
+            application/json:
+              schema:
+                $ref: "./schemas/chat-completion-response.schema.json"
+  /datasets/import:
+    post:
+      summary: Import dataset export
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "./schemas/dataset-import-request.schema.json"
+      responses:
+        "200":
+          description: Accepted

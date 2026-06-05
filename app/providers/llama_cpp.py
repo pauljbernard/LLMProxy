@@ -1,0 +1,7 @@
+"""llama.cpp provider stub."""
+
+from app.providers.ollama import OllamaProvider
+
+
+class LlamaCppProvider(OllamaProvider):
+    provider_name = "llama_cpp"

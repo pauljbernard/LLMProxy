@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DatasetImportRequest",
+  "type": "object",
+  "required": ["dataset_export_id", "manifest_path", "data_path"],
+  "properties": {
+    "dataset_export_id": { "type": "string" },
+    "manifest_path": { "type": "string" },
+    "data_path": { "type": "string" }
+  }
+}

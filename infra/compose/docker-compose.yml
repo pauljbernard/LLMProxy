@@ -1,0 +1,70 @@
+version: "3.9"
+
+services:
+  api:
+    image: llmproxy:dev
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    env_file:
+      - .env.example
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - exports_data:/data/exports
+      - datasets_data:/data/datasets
+      - models_data:/data/models
+      - checkpoints_data:/data/checkpoints
+      - reports_data:/data/reports
+
+  worker:
+    image: llmproxy:dev
+    command: python -m app.main
+    env_file:
+      - .env.example
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - exports_data:/data/exports
+      - datasets_data:/data/datasets
+      - models_data:/data/models
+      - checkpoints_data:/data/checkpoints
+      - reports_data:/data/reports
+
+  scheduler:
+    image: llmproxy:dev
+    command: python -m app.main
+    env_file:
+      - .env.example
+    depends_on:
+      - postgres
+      - redis
+
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: llmproxy
+      POSTGRES_USER: llm
+      POSTGRES_PASSWORD: llm
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+volumes:
+  postgres_data:
+  redis_data:
+  exports_data:
+  datasets_data:
+  models_data:
+  checkpoints_data:
+  reports_data:

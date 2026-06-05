@@ -1,0 +1,344 @@
+<svg width="1600" height="900" viewBox="0 0 1600 900" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1600" y2="900" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F8FBFF"/>
+      <stop offset="1" stop-color="#EEF6FF"/>
+    </linearGradient>
+    <linearGradient id="headerBlue" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2258D3"/>
+      <stop offset="1" stop-color="#173E97"/>
+    </linearGradient>
+    <linearGradient id="headerTeal" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1AA6A6"/>
+      <stop offset="1" stop-color="#117C7C"/>
+    </linearGradient>
+    <linearGradient id="headerOrange" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FF9B32"/>
+      <stop offset="1" stop-color="#EA6C00"/>
+    </linearGradient>
+    <linearGradient id="headerPurple" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7A4DDA"/>
+      <stop offset="1" stop-color="#5F31B3"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="12" stdDeviation="18" flood-color="#0F172A" flood-opacity="0.10"/>
+    </filter>
+    <style>
+      .title { font: 700 38px 'Arial', sans-serif; fill: #0F2A56; }
+      .subtitle { font: 600 18px 'Arial', sans-serif; fill: #2563EB; }
+      .panel-title { font: 700 15px 'Arial', sans-serif; fill: white; }
+      .box-title { font: 700 14px 'Arial', sans-serif; fill: #0F2A56; }
+      .label { font: 600 12px 'Arial', sans-serif; fill: #24406A; }
+      .small { font: 500 11px 'Arial', sans-serif; fill: #35527A; }
+      .metric { font: 700 13px 'Arial', sans-serif; fill: #10315E; }
+      .muted { font: 500 11px 'Arial', sans-serif; fill: #4B6488; }
+      .num { font: 700 16px 'Arial', sans-serif; fill: #2258D3; }
+      .provider { font: 700 14px 'Arial', sans-serif; fill: #102A52; }
+      .stage { font: 700 13px 'Arial', sans-serif; fill: #2258D3; }
+    </style>
+    <marker id="arrowBlue" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+      <path d="M0 0L10 5L0 10Z" fill="#2258D3"/>
+    </marker>
+    <marker id="arrowTeal" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+      <path d="M0 0L10 5L0 10Z" fill="#128489"/>
+    </marker>
+  </defs>
+
+  <rect width="1600" height="900" fill="url(#bg)"/>
+  <g opacity="0.18">
+    <path d="M0 60H1600M0 120H1600M0 180H1600M0 240H1600M0 300H1600M0 360H1600M0 420H1600M0 480H1600M0 540H1600M0 600H1600M0 660H1600M0 720H1600M0 780H1600M0 840H1600" stroke="#BFD2EE" stroke-width="1"/>
+    <path d="M80 0V900M160 0V900M240 0V900M320 0V900M400 0V900M480 0V900M560 0V900M640 0V900M720 0V900M800 0V900M880 0V900M960 0V900M1040 0V900M1120 0V900M1200 0V900M1280 0V900M1360 0V900M1440 0V900M1520 0V900" stroke="#BFD2EE" stroke-width="1"/>
+  </g>
+
+  <g transform="translate(560 28)">
+    <text class="title" x="0" y="0" dominant-baseline="hanging">llmProxy</text>
+    <text class="subtitle" x="4" y="50">Intelligent LLM Gateway • Learn • Improve • Specialize</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="20" y="145" width="158" height="380" rx="18" fill="white" stroke="#2258D3" stroke-width="2"/>
+    <rect x="20" y="145" width="158" height="50" rx="18" fill="url(#headerBlue)"/>
+    <circle cx="43" cy="170" r="16" fill="white" fill-opacity="0.96"/>
+    <text class="num" x="37" y="176">1</text>
+    <text class="panel-title" x="64" y="176">CLIENT LAYER</text>
+
+    <rect x="42" y="227" width="44" height="34" rx="7" stroke="#2258D3" stroke-width="3"/>
+    <line x1="42" y1="240" x2="86" y2="240" stroke="#2258D3" stroke-width="3"/>
+    <text class="box-title" x="98" y="250">IDE</text>
+
+    <rect x="42" y="290" width="44" height="34" rx="7" stroke="#102A52" stroke-width="3"/>
+    <path d="M54 307L61 314L54 321" stroke="#102A52" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <line x1="67" y1="321" x2="77" y2="321" stroke="#102A52" stroke-width="3" stroke-linecap="round"/>
+    <text class="box-title" x="98" y="313">CLI</text>
+
+    <circle cx="64" cy="386" r="18" stroke="#0F2A56" stroke-width="3"/>
+    <circle cx="57" cy="381" r="2.5" fill="#0F2A56"/>
+    <circle cx="71" cy="381" r="2.5" fill="#0F2A56"/>
+    <rect x="50" y="391" width="28" height="10" rx="4" fill="#0F2A56"/>
+    <text class="box-title" x="98" y="381">CODING</text>
+    <text class="box-title" x="98" y="401">AGENTS</text>
+
+    <polygon points="64,436 86,449 86,475 64,488 42,475 42,449" stroke="#2258D3" stroke-width="3" fill="none"/>
+    <text class="box-title" x="98" y="464">APPS</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="215" y="145" width="195" height="380" rx="18" fill="white" stroke="#2258D3" stroke-width="2"/>
+    <rect x="215" y="145" width="195" height="50" rx="18" fill="url(#headerBlue)"/>
+    <circle cx="239" cy="170" r="16" fill="white" fill-opacity="0.96"/>
+    <text class="num" x="233" y="176">2</text>
+    <text class="panel-title" x="258" y="167">OPENAI-COMPATIBLE</text>
+    <text class="panel-title" x="274" y="186">PROXY GATEWAY</text>
+    <path d="M312 247L358 272V322L312 347L266 322V272L312 247Z" fill="#F0F6FF" stroke="#2258D3" stroke-width="6"/>
+    <circle cx="312" cy="297" r="10" fill="white" stroke="#2258D3" stroke-width="4"/>
+    <line x1="312" y1="307" x2="312" y2="326" stroke="#2258D3" stroke-width="4"/>
+    <line x1="302" y1="304" x2="286" y2="317" stroke="#2258D3" stroke-width="4"/>
+    <line x1="322" y1="304" x2="338" y2="317" stroke="#2258D3" stroke-width="4"/>
+    <text class="label" x="247" y="415">OpenAI-compatible</text>
+    <text class="label" x="278" y="438">API surface</text>
+    <rect x="238" y="452" width="150" height="50" rx="10" fill="#F4F8FE" stroke="#BFD2EE" stroke-width="1.5"/>
+    <text class="small" x="254" y="478">/v1/chat/completions</text>
+    <text class="small" x="254" y="498">/v1/models  /v1/embeddings</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="441" y="145" width="205" height="380" rx="18" fill="white" stroke="#178A8A" stroke-width="2"/>
+    <rect x="441" y="145" width="205" height="50" rx="18" fill="url(#headerTeal)"/>
+    <circle cx="465" cy="170" r="16" fill="white" fill-opacity="0.96"/>
+    <text class="num" x="459" y="176">3</text>
+    <text class="panel-title" x="484" y="167">SESSION-AWARE</text>
+    <text class="panel-title" x="481" y="186">ROUTING &amp; POLICY</text>
+
+    <rect x="462" y="228" width="163" height="58" rx="12" fill="#FCFFFF" stroke="#52B9B9" stroke-width="1.5"/>
+    <text class="box-title" x="517" y="252">REQUEST</text>
+    <text class="box-title" x="512" y="272">CLASSIFIER</text>
+
+    <rect x="462" y="302" width="163" height="58" rx="12" fill="#FCFFFF" stroke="#52B9B9" stroke-width="1.5"/>
+    <text class="box-title" x="514" y="326">PROVIDER</text>
+    <text class="box-title" x="523" y="346">RANKING</text>
+
+    <rect x="462" y="376" width="163" height="58" rx="12" fill="#FCFFFF" stroke="#52B9B9" stroke-width="1.5"/>
+    <text class="box-title" x="523" y="400">FALLBACK</text>
+    <text class="box-title" x="536" y="420">CHAIN</text>
+
+    <rect x="462" y="450" width="163" height="58" rx="12" fill="#FCFFFF" stroke="#52B9B9" stroke-width="1.5"/>
+    <text class="box-title" x="499" y="474">PRIVACY / BUDGET</text>
+    <text class="box-title" x="524" y="494">POLICY</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="676" y="145" width="322" height="402" rx="18" fill="white" stroke="#2258D3" stroke-width="2"/>
+    <rect x="676" y="145" width="322" height="50" rx="18" fill="url(#headerBlue)"/>
+    <circle cx="700" cy="170" r="16" fill="white" fill-opacity="0.96"/>
+    <text class="num" x="694" y="176">4</text>
+    <text class="panel-title" x="783" y="176">MODEL BACKENDS</text>
+
+    <rect x="692" y="210" width="290" height="126" rx="14" fill="#FBFDFF" stroke="#A7C3F4" stroke-width="1.5"/>
+    <text class="box-title" x="804" y="236">LOCAL MODELS</text>
+    <text class="provider" x="716" y="287">Ollama</text>
+    <text class="provider" x="794" y="287">vLLM</text>
+    <text class="provider" x="856" y="287">llama.cpp</text>
+    <text class="provider" x="942" y="287">MLX</text>
+    <circle cx="728" cy="260" r="18" stroke="#222" stroke-width="3"/>
+    <circle cx="720" cy="254" r="2.5" fill="#222"/>
+    <circle cx="736" cy="254" r="2.5" fill="#222"/>
+    <path d="M717 268C723 272 733 272 739 268" stroke="#222" stroke-width="3" stroke-linecap="round"/>
+    <path d="M714 244L718 231L726 241" stroke="#222" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M742 244L738 231L730 241" stroke="#222" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M783 241L792 279L801 241L810 279L819 241" stroke="#2258D3" stroke-width="3" fill="none"/>
+    <rect x="851" y="242" width="34" height="34" rx="6" stroke="#24406A" stroke-width="2"/>
+    <path d="M860 256L854 259L860 262" stroke="#24406A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M876 256L882 259L876 262" stroke="#24406A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M903 241H912L920 260L928 241H937L924 278H915L903 241Z" fill="#3978D6"/>
+    <path d="M944 241H955V278H944V241Z" fill="#6A64CE"/>
+    <path d="M959 241H970L980 260L990 241H1001L984 278H976L959 241Z" transform="translate(-40 0)" fill="#2A9D9D"/>
+
+    <rect x="692" y="352" width="290" height="179" rx="14" fill="#FBFDFF" stroke="#A7C3F4" stroke-width="1.5"/>
+    <text class="box-title" x="788" y="378">FRONTIER PROVIDERS</text>
+    <text class="provider" x="724" y="456">OpenAI</text>
+    <text class="provider" x="816" y="456">Anthropic</text>
+    <text class="provider" x="910" y="456">Google</text>
+    <text class="small" x="913" y="474">Gemini</text>
+    <text class="provider" x="732" y="520">xAI</text>
+    <text class="provider" x="814" y="520">AWS</text>
+    <text class="small" x="805" y="538">Bedrock</text>
+    <text class="provider" x="912" y="520">Azure</text>
+    <text class="small" x="903" y="538">OpenAI</text>
+    <circle cx="738" cy="424" r="18" stroke="#111" stroke-width="4"/>
+    <path d="M727 414C733 407 744 407 750 414" stroke="#111" stroke-width="4" stroke-linecap="round"/>
+    <path d="M726 434C732 441 744 441 750 434" stroke="#111" stroke-width="4" stroke-linecap="round"/>
+    <text x="829" y="430" font-family="Arial, sans-serif" font-size="34" font-weight="700" fill="#222">AI</text>
+    <circle cx="929" cy="423" r="17" stroke="#EA4335" stroke-width="5"/>
+    <path d="M945 419H927V430H939" stroke="#4285F4" stroke-width="5" stroke-linecap="round"/>
+    <path d="M929 406C921 407 915 412 913 420" stroke="#34A853" stroke-width="5" stroke-linecap="round"/>
+    <path d="M913 427C915 436 921 441 929 442" stroke="#FBBC05" stroke-width="5" stroke-linecap="round"/>
+    <text x="734" y="493" font-family="Arial, sans-serif" font-size="34" font-weight="700" fill="#111">xI</text>
+    <rect x="816" y="404" width="34" height="34" rx="8" fill="#6A3FD1"/>
+    <path d="M833 411L838 420H848L840 426L843 436L833 430L823 436L826 426L818 420H828L833 411Z" fill="white"/>
+    <path d="M921 404H954V437H921V404Z" fill="#2F7DD3"/>
+    <path d="M926 432L937 409L948 432" stroke="white" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+    <line x1="931" y1="425" x2="943" y2="425" stroke="white" stroke-width="4" stroke-linecap="round"/>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="1023" y="145" width="196" height="380" rx="18" fill="white" stroke="#F08A1F" stroke-width="2"/>
+    <rect x="1023" y="145" width="196" height="50" rx="18" fill="url(#headerOrange)"/>
+    <circle cx="1047" cy="170" r="16" fill="white" fill-opacity="0.96"/>
+    <text class="num" x="1041" y="176">5</text>
+    <text class="panel-title" x="1070" y="167">JUDGE / ENSEMBLE /</text>
+    <text class="panel-title" x="1076" y="186">CRITIQUE</text>
+
+    <rect x="1045" y="242" width="152" height="74" rx="12" fill="#FFFDFC" stroke="#F2B16B" stroke-width="1.5"/>
+    <text class="box-title" x="1098" y="275">JUDGE</text>
+    <text class="small" x="1071" y="296">(quality, safety, scoring)</text>
+
+    <rect x="1045" y="334" width="152" height="74" rx="12" fill="#FFFDFC" stroke="#F2B16B" stroke-width="1.5"/>
+    <text class="box-title" x="1084" y="367">ENSEMBLE</text>
+    <text class="small" x="1072" y="388">(aggregate, compare, pick)</text>
+
+    <rect x="1045" y="426" width="152" height="74" rx="12" fill="#FFFDFC" stroke="#F2B16B" stroke-width="1.5"/>
+    <text class="box-title" x="1091" y="459">CRITIQUE</text>
+    <text class="small" x="1086" y="480">(feedback loop)</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="1247" y="145" width="149" height="380" rx="18" fill="white" stroke="#178A8A" stroke-width="2"/>
+    <rect x="1247" y="145" width="149" height="50" rx="18" fill="url(#headerTeal)"/>
+    <circle cx="1271" cy="170" r="16" fill="white" fill-opacity="0.96"/>
+    <text class="num" x="1265" y="176">6</text>
+    <text class="panel-title" x="1300" y="167">TRAINING</text>
+    <text class="panel-title" x="1273" y="186">CANDIDATE STORE</text>
+    <ellipse cx="1321.5" cy="336" rx="36" ry="14" fill="#ECFFFF" stroke="#128489" stroke-width="3"/>
+    <path d="M1285.5 336V398C1285.5 406 1301.6 412 1321.5 412C1341.4 412 1357.5 406 1357.5 398V336" fill="#F7FFFF" stroke="#128489" stroke-width="3"/>
+    <ellipse cx="1321.5" cy="398" rx="36" ry="14" fill="#F7FFFF" stroke="#128489" stroke-width="3"/>
+    <text class="small" x="1271" y="448">Conversations, critiques,</text>
+    <text class="small" x="1280" y="468">ratings, metadata</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="1424" y="145" width="161" height="380" rx="18" fill="white" stroke="#178A8A" stroke-width="2"/>
+    <rect x="1424" y="145" width="161" height="50" rx="18" fill="url(#headerTeal)"/>
+    <circle cx="1448" cy="170" r="16" fill="white" fill-opacity="0.96"/>
+    <text class="num" x="1442" y="176">7</text>
+    <text class="panel-title" x="1471" y="167">DATASET EXPORT</text>
+    <text class="panel-title" x="1490" y="186">+ MANIFEST</text>
+    <path d="M1470 270H1526L1540 284V422H1470V270Z" fill="#FAFFFF" stroke="#128489" stroke-width="3"/>
+    <path d="M1526 270V292H1540" stroke="#128489" stroke-width="3"/>
+    <path d="M1491 336H1518M1491 357H1518M1491 378H1518" stroke="#128489" stroke-width="3" stroke-linecap="round"/>
+    <text class="small" x="1456" y="458">Versioned manifests,</text>
+    <text class="small" x="1450" y="478">JSONL / Parquet exports</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="720" y="592" width="738" height="152" rx="18" fill="white" stroke="#2258D3" stroke-width="2"/>
+    <circle cx="748" cy="617" r="16" fill="#2258D3"/>
+    <text x="742" y="623" font-family="Arial, sans-serif" font-size="16" font-weight="700" fill="white">8</text>
+    <text class="stage" x="774" y="623">LEARNER PIPELINE</text>
+    <g>
+      <circle cx="776" cy="671" r="34" fill="#FCFEFF" stroke="#2258D3" stroke-width="2"/>
+      <path d="M776 652V681M764 671L776 683L788 671" stroke="#2258D3" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+      <line x1="760" y1="690" x2="792" y2="690" stroke="#2258D3" stroke-width="3" stroke-linecap="round"/>
+      <text class="box-title" x="747" y="724">INGEST</text>
+    </g>
+    <g>
+      <circle cx="901" cy="671" r="34" fill="#FCFEFF" stroke="#2258D3" stroke-width="2"/>
+      <rect x="886" y="654" width="30" height="34" rx="4" stroke="#2258D3" stroke-width="3"/>
+      <path d="M892 663L897 668L905 659" stroke="#2258D3" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M892 675L897 680L905 671" stroke="#2258D3" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+      <text class="box-title" x="871" y="724">VALIDATE</text>
+    </g>
+    <g>
+      <circle cx="1026" cy="671" r="34" fill="#FCFEFF" stroke="#2258D3" stroke-width="2"/>
+      <circle cx="1015" cy="661" r="6" stroke="#2258D3" stroke-width="2.5"/>
+      <circle cx="1037" cy="661" r="6" stroke="#2258D3" stroke-width="2.5"/>
+      <circle cx="1026" cy="682" r="6" stroke="#2258D3" stroke-width="2.5"/>
+      <line x1="1020" y1="665" x2="1023" y2="676" stroke="#2258D3" stroke-width="2.5"/>
+      <line x1="1032" y1="665" x2="1029" y2="676" stroke="#2258D3" stroke-width="2.5"/>
+      <text class="box-title" x="1008" y="724">DEDUPE</text>
+    </g>
+    <g>
+      <circle cx="1151" cy="671" r="34" fill="#FCFEFF" stroke="#2258D3" stroke-width="2"/>
+      <path d="M1136 688V656H1147V688H1136Z" fill="#2258D3"/>
+      <path d="M1149 688V648H1160V688H1149Z" fill="#4A7FE0"/>
+      <path d="M1162 688V662H1173V688H1162Z" fill="#7BA4ED"/>
+      <text class="box-title" x="1139" y="724">SPLIT</text>
+    </g>
+    <g>
+      <circle cx="1276" cy="671" r="34" fill="#FCFEFF" stroke="#2258D3" stroke-width="2"/>
+      <path d="M1261 665H1291M1261 677H1291M1268 658V684M1284 658V684" stroke="#2258D3" stroke-width="3" stroke-linecap="round"/>
+      <text class="box-title" x="1242" y="724">LoRA / QLoRA</text>
+    </g>
+    <g>
+      <circle cx="1401" cy="671" r="34" fill="#FCFEFF" stroke="#2258D3" stroke-width="2"/>
+      <path d="M1388 684L1398 672L1406 678L1416 658" stroke="#2258D3" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+      <line x1="1387" y1="684" x2="1418" y2="684" stroke="#2258D3" stroke-width="3"/>
+      <text class="box-title" x="1371" y="724">EVALUATE</text>
+    </g>
+    <g>
+      <circle cx="1515" cy="671" r="34" fill="#FCFEFF" stroke="#2258D3" stroke-width="2"/>
+      <path d="M1515 652L1531 660V674C1531 686 1522 694 1515 698C1508 694 1499 686 1499 674V660L1515 652Z" fill="#2258D3" fill-opacity="0.12" stroke="#2258D3" stroke-width="3"/>
+      <path d="M1507 674L1513 680L1523 666" stroke="#2258D3" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+      <text class="box-title" x="1490" y="724">PROMOTE</text>
+    </g>
+    <path d="M811 671H866M936 671H991M1061 671H1116M1186 671H1241M1311 671H1366M1436 671H1476" stroke="#2258D3" stroke-width="3" marker-end="url(#arrowBlue)"/>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="464" y="582" width="190" height="160" rx="18" fill="white" stroke="#6A3FD1" stroke-width="2"/>
+    <rect x="464" y="582" width="190" height="52" rx="18" fill="url(#headerPurple)"/>
+    <circle cx="488" cy="608" r="16" fill="white" fill-opacity="0.96"/>
+    <text class="num" x="482" y="614">9</text>
+    <text class="panel-title" x="510" y="604">MODEL REGISTRY +</text>
+    <text class="panel-title" x="526" y="623">DEPLOYMENT</text>
+    <ellipse cx="559" cy="666" rx="34" ry="12" fill="#FAF7FF" stroke="#6A3FD1" stroke-width="3"/>
+    <path d="M525 666V713C525 720 540 726 559 726C578 726 593 720 593 713V666" fill="#FEFCFF" stroke="#6A3FD1" stroke-width="3"/>
+    <ellipse cx="559" cy="713" rx="34" ry="12" fill="#FEFCFF" stroke="#6A3FD1" stroke-width="3"/>
+    <text class="small" x="492" y="689">Versioned models,</text>
+    <text class="small" x="492" y="709">lineage, deploy to local</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="96" y="585" width="254" height="156" rx="18" fill="#FBFFFE" stroke="#22A3A3" stroke-width="2" stroke-dasharray="10 8"/>
+    <circle cx="120" cy="610" r="16" fill="#22A3A3"/>
+    <text x="114" y="616" font-family="Arial, sans-serif" font-size="16" font-weight="700" fill="white">10</text>
+    <text x="144" y="616" font-family="Arial, sans-serif" font-size="15" font-weight="700" fill="#127D7D">FEEDBACK LOOP</text>
+    <path d="M171 655C184 639 210 640 223 656" stroke="#128489" stroke-width="5" stroke-linecap="round" fill="none"/>
+    <path d="M220 648L227 660L214 661" stroke="#128489" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M223 691C210 707 184 706 171 690" stroke="#128489" stroke-width="5" stroke-linecap="round" fill="none"/>
+    <path d="M174 699L167 687L180 686" stroke="#128489" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    <text class="box-title" x="134" y="706">Proxy Routing Update</text>
+    <text class="box-title" x="157" y="728">+ Local Specialists</text>
+  </g>
+
+  <path d="M178 335H205" stroke="#2258D3" stroke-width="4" marker-end="url(#arrowBlue)"/>
+  <path d="M410 335H438" stroke="#2258D3" stroke-width="4" marker-end="url(#arrowBlue)"/>
+  <path d="M646 335H673" stroke="#2258D3" stroke-width="4" marker-end="url(#arrowBlue)"/>
+  <path d="M998 335H1020" stroke="#2258D3" stroke-width="4" marker-end="url(#arrowBlue)"/>
+  <path d="M1219 335H1244" stroke="#2258D3" stroke-width="4" marker-end="url(#arrowBlue)"/>
+  <path d="M1396 335H1421" stroke="#2258D3" stroke-width="4" marker-end="url(#arrowBlue)"/>
+  <path d="M1504 525V560H792V586" stroke="#2258D3" stroke-width="4" marker-end="url(#arrowBlue)"/>
+  <path d="M720 671H657" stroke="#2258D3" stroke-width="4" marker-end="url(#arrowBlue)"/>
+  <path d="M464 671H353" stroke="#128489" stroke-width="4" marker-end="url(#arrowTeal)"/>
+  <path d="M557 582V535" stroke="#128489" stroke-width="4" marker-end="url(#arrowTeal)"/>
+
+  <g filter="url(#shadow)">
+    <rect x="110" y="784" width="1380" height="126" rx="18" fill="white" stroke="#8EB7F1" stroke-width="2"/>
+    <text x="800" y="819" text-anchor="middle" font-family="Arial, sans-serif" font-size="18" font-weight="700" fill="#2258D3">CROSS-CUTTING CONTROLS</text>
+    <line x1="155" y1="843" x2="1460" y2="843" stroke="#D7E5FA" stroke-width="1"/>
+
+    <text class="metric" x="185" y="862">OBSERVABILITY</text>
+    <text class="muted" x="185" y="884">traces, metrics, logs, dashboards, alerts</text>
+
+    <text class="metric" x="460" y="862">COST TELEMETRY</text>
+    <text class="muted" x="460" y="884">token usage, route cost, budgets, forecasts</text>
+
+    <text class="metric" x="760" y="862">SECURITY</text>
+    <text class="muted" x="760" y="884">auth, secrets management, privacy controls</text>
+
+    <text class="metric" x="1035" y="862">AUDITABILITY</text>
+    <text class="muted" x="1035" y="884">lineage, immutable logs, compliance reports</text>
+
+    <text class="metric" x="1310" y="862">ROLLBACK</text>
+    <text class="muted" x="1310" y="884">safe restore, canary recovery, route reversal</text>
+  </g>
+</svg>

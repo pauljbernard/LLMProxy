@@ -1,0 +1,1755 @@
+Below is a consolidated GitHub-ready version. I’d name it:
+
+docs/llm-proxy-learning-system.md
+
+LLM Proxy Learning System
+
+Architecture, Requirements, and Integration Specification
+
+1. Purpose
+
+Build a local-first LLM proxy and learning pipeline that turns high-value model interactions into durable local capability.
+
+The system has two primary responsibilities:
+
+1. Serve as an OpenAI-compatible runtime proxy for local models, closed-source teacher models, coding agents, IDEs, CLIs, and other tools.
+2. Capture, validate, export, train, evaluate, and redeploy improved local models through a controlled learning loop.
+
+The objective is not to create a frontier model.
+
+The objective is to create smaller, cheaper, private, local, domain-specialized models that improve over time from:
+
+* teacher-model expertise
+* validated runtime interactions
+* repository-specific patterns
+* personal coding and architecture preferences
+* Common Lisp and Smalltalk knowledge
+* agent-system design patterns
+* investment reasoning frameworks
+* writing and explanation style
+
+The system should allow local models to become progressively more useful within targeted domains while preserving auditability, quality gates, rollback capability, and runtime stability.
+
+⸻
+
+2. Core Concept
+
+The system consists of a runtime proxy, a training pipeline, and an integration layer.
+
+User / IDE / CLI / Coding Agent
+        ↓
+OpenAI-Compatible LLM Proxy
+        ↓
+Routing / Policy / Evaluation / Recording
+        ↓
+Local Models + Closed Teacher Models + Tools
+        ↓
+Training Candidate Store
+        ↓
+Approved Dataset Export + Manifest
+        ↓
+Learner Training Pipeline
+        ↓
+LoRA / QLoRA Fine-Tuning
+        ↓
+Evaluation + Promotion Gate
+        ↓
+Model Registry + Deployment
+        ↓
+Proxy Routing Update
+        ↓
+Improved Local Model
+
+The proxy should not merely answer questions.
+
+The learner should not merely train models.
+
+Together they form a controlled learning system.
+
+The proxy converts expensive model intelligence into reusable local capability.
+
+⸻
+
+3. System Goals
+
+3.1 Runtime Goals
+
+The system must:
+
+* expose an OpenAI-compatible /v1/chat/completions endpoint
+* expose /v1/models
+* optionally expose /v1/embeddings
+* route requests to local or remote models
+* support streaming responses
+* support domain-aware routing
+* support local inference engines
+* support closed model providers through adapters
+* preserve request and response metadata
+* record selected interactions as training candidates
+
+Supported local runtimes should include one or more of:
+
+* Ollama
+* llama.cpp server
+* vLLM
+* LM Studio
+* MLX-LM / MLX server
+
+Supported teacher/provider adapters should include:
+
+* OpenAI-compatible providers
+* Anthropic-compatible providers
+* Google Gemini-compatible providers
+* DeepSeek-compatible providers
+
+⸻
+
+3.2 Distillation Goals
+
+The system must:
+
+* record selected interactions as training candidates
+* query multiple teacher models for hard tasks
+* synthesize improved answers from teacher outputs
+* score responses using judge models and rule-based validators
+* preserve all teacher outputs and critiques
+* export approved examples as JSONL
+* support separate datasets by domain and target adapter
+* prevent unapproved or low-quality data from entering training
+
+⸻
+
+3.3 Training Goals
+
+The learner pipeline must:
+
+* consume approved proxy exports
+* validate dataset integrity
+* support domain-specific datasets
+* support deterministic dataset versioning
+* support LoRA fine-tuning
+* support QLoRA fine-tuning
+* support multiple base models
+* support repeatable training runs
+* support checkpointing
+* store artifacts
+* register trained adapters
+* evaluate every trained model
+* compare against base models and previous local versions
+* prevent bad models from promotion
+
+⸻
+
+3.4 Deployment Goals
+
+The system must:
+
+* publish approved models to local runtimes
+* register deployed models with the proxy
+* support model aliases
+* support routing by domain and task type
+* support shadow deployment
+* support canary deployment
+* support production promotion
+* support rollback
+* preserve prior production models
+
+⸻
+
+4. Non-Goals
+
+The first version does not need to:
+
+* train frontier-scale foundation models
+* support large distributed multi-node training
+* implement RLHF
+* implement full preference optimization
+* support every LLM provider
+* support every training framework
+* replace a full MLOps platform
+* perform autonomous investment decisions
+* execute financial transactions
+* guarantee factual correctness without validation
+* implement enterprise-grade multi-user security
+
+⸻
+
+5. High-Level Architecture
+
+┌──────────────────────────────┐
+│ Client Layer                  │
+│ IDE, CLI, Codex, Web UI       │
+└───────────────┬──────────────┘
+                ▼
+┌──────────────────────────────┐
+│ OpenAI-Compatible API Gateway │
+└───────────────┬──────────────┘
+                ▼
+┌──────────────────────────────┐
+│ Request Classifier            │
+│ domain, risk, complexity      │
+└───────────────┬──────────────┘
+                ▼
+┌──────────────────────────────┐
+│ Routing Policy Engine         │
+└───────┬────────┬─────────────┘
+        ▼        ▼
+┌────────────┐ ┌────────────────┐
+│ Local LLMs │ │ Closed Teachers │
+└─────┬──────┘ └───────┬────────┘
+      └──────┬─────────┘
+             ▼
+┌──────────────────────────────┐
+│ Judge / Critic / Synthesizer  │
+└───────────────┬──────────────┘
+                ▼
+┌──────────────────────────────┐
+│ Training Candidate Recorder   │
+└───────────────┬──────────────┘
+                ▼
+┌──────────────────────────────┐
+│ Dataset Export + Manifest     │
+└───────────────┬──────────────┘
+                ▼
+┌──────────────────────────────┐
+│ Learner Training Pipeline     │
+└───────────────┬──────────────┘
+                ▼
+┌──────────────────────────────┐
+│ Evaluation + Promotion Gate   │
+└───────────────┬──────────────┘
+                ▼
+┌──────────────────────────────┐
+│ Model Registry + Deployment   │
+└───────────────┬──────────────┘
+                ▼
+┌──────────────────────────────┐
+│ Proxy Routing Policy Update   │
+└──────────────────────────────┘
+
+⸻
+
+6. Recommended Technology Stack
+
+6.1 Core Runtime
+
+Preferred:
+
+* Python 3.11+
+* FastAPI
+* Postgres
+* pgvector
+* Redis
+* SQLAlchemy
+* Alembic
+* Pydantic
+* Celery or RQ
+
+FastAPI is preferred for the first version because Python has stronger LLM, dataset, embedding, evaluation, and fine-tuning tooling.
+
+6.2 Training Frameworks
+
+Preferred first implementation:
+
+* Unsloth
+* Transformers
+* PEFT
+* TRL
+* Datasets
+* Accelerate
+* bitsandbytes
+* PyTorch
+
+Optional later support:
+
+* Axolotl
+* LLaMA Factory
+* TorchTune
+* MLX-LM
+
+6.3 Supported Model Families
+
+Initial target families:
+
+* Qwen Coder
+* Qwen general models
+* DeepSeek Coder
+* Llama
+* Mistral
+* Gemma
+* Phi
+
+⸻
+
+7. Core Runtime Components
+
+7.1 API Gateway
+
+Expose OpenAI-compatible endpoints:
+
+POST /v1/chat/completions
+GET  /v1/models
+POST /v1/embeddings
+
+Expose native proxy endpoints:
+
+POST /proxy/teacher
+POST /proxy/ensemble
+POST /proxy/evaluate
+POST /proxy/record
+GET  /proxy/training-candidates
+POST /proxy/training-candidates/{id}/approve
+POST /proxy/training-candidates/{id}/reject
+POST /proxy/export/jsonl
+POST /proxy/models/register
+POST /proxy/models/{model_alias}/rollback
+GET  /proxy/runs/{id}
+GET  /health
+GET  /metrics
+
+Supported proxy model aliases:
+
+proxy-auto
+proxy-local
+proxy-teacher
+proxy-ensemble
+proxy-coding
+proxy-architecture
+proxy-investment
+
+⸻
+
+7.2 Request Classifier
+
+Classify every request by:
+
+* domain
+* task type
+* complexity
+* privacy sensitivity
+* tool need
+* training value
+* risk level
+
+Example domains:
+
+coding
+software_architecture
+common_lisp
+smalltalk
+agent_systems
+investment_analysis
+writing
+general
+
+Example task types:
+
+code_generation
+code_review
+bug_fix
+architecture_decision
+investment_thesis
+comparison
+refactoring
+documentation
+question_answer
+
+The classifier can start rule-based and later become model-based.
+
+⸻
+
+7.3 Routing Policy Engine
+
+The routing engine decides where a request goes.
+
+Routing modes:
+
+local_only
+teacher_single
+teacher_ensemble
+local_then_teacher
+teacher_then_local
+judge_only
+record_only
+
+Example rules:
+
+If domain = coding and complexity = low:
+    route to local coding model
+If domain = software_architecture and complexity = high:
+    query teacher ensemble
+If domain = investment_analysis:
+    use teacher ensemble and require critique
+If privacy = high:
+    use local_only
+If record_training_candidate = true:
+    synthesize, score, and persist candidate
+
+⸻
+
+7.4 Provider Adapter Layer
+
+All model providers must implement a common interface.
+
+class ModelProvider:
+    async def chat(self, request: ChatRequest) -> ChatResponse:
+        ...
+    async def stream_chat(self, request: ChatRequest):
+        ...
+    async def embeddings(self, request: EmbeddingRequest) -> EmbeddingResponse:
+        ...
+    async def list_models(self) -> list[ModelInfo]:
+        ...
+
+All providers must return normalized metadata:
+
+model
+provider
+latency_ms
+input_tokens
+output_tokens
+cost_estimate
+finish_reason
+raw_response_reference
+
+⸻
+
+7.5 Teacher Ensemble
+
+For selected requests, the proxy should ask multiple teacher models.
+
+Process:
+
+1. Send the normalized prompt to Teacher A, Teacher B, and Teacher C.
+2. Collect all answers.
+3. Ask a judge model to compare outputs.
+4. Produce a synthesized best answer.
+5. Store all teacher outputs.
+6. Store the judge critique.
+7. Mark the synthesized answer as a training candidate if eligible.
+
+Output should include:
+
+final_answer
+teacher_outputs
+judge_critique
+chosen_rationale
+quality_score
+training_eligibility
+training_candidate_id
+
+⸻
+
+7.6 Judge and Critic Layer
+
+Evaluate responses by:
+
+* correctness
+* completeness
+* technical depth
+* architectural soundness
+* clarity
+* style match
+* testability
+* risk awareness
+* domain fit
+
+For code, also evaluate:
+
+* compiles
+* tests pass
+* minimal change
+* follows repository conventions
+* security risk
+* performance risk
+
+For investment analysis, evaluate:
+
+* causal reasoning
+* scenario structure
+* assumption clarity
+* second-order effects
+* risk balance
+* avoidance of unsupported predictions
+
+⸻
+
+7.7 Training Candidate Recorder
+
+Persist:
+
+* original prompt
+* normalized prompt
+* domain
+* task type
+* model outputs
+* teacher critiques
+* judge scores
+* selected answer
+* user feedback
+* validation results
+* approval status
+* export status
+
+Training candidates move through this lifecycle:
+
+captured
+scored
+needs_review
+approved
+rejected
+exported
+imported
+trained
+retired
+
+A candidate may not be exported unless:
+
+status = approved
+quality_score >= configured threshold
+schema_version supported
+export_eligible = true
+blocked = false
+
+⸻
+
+8. Dataset Export Contract
+
+The proxy exports approved examples as JSONL.
+
+Each line must be a complete training record.
+
+Required top-level fields:
+
+schema_version
+candidate_id
+domain
+task_type
+messages
+selected_response
+quality_score
+approval_status
+export_eligible
+provenance
+validation
+metadata
+
+Example record:
+
+{
+  "schema_version": "1.0",
+  "candidate_id": "cand_20260605_8821c",
+  "domain": "software_architecture",
+  "task_type": "architecture_decision",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a senior software architect."
+    },
+    {
+      "role": "user",
+      "content": "Should this system use Neo4j or Postgres with pgvector?"
+    },
+    {
+      "role": "assistant",
+      "content": "The better default is Postgres with pgvector unless..."
+    }
+  ],
+  "selected_response": "The better default is Postgres with pgvector unless...",
+  "quality_score": 0.93,
+  "approval_status": "approved",
+  "export_eligible": true,
+  "provenance": {
+    "request_id": "req_20260605_9f21a",
+    "source": "teacher_ensemble",
+    "teacher_models": [
+      "teacher_reasoning_primary",
+      "teacher_coding_primary"
+    ],
+    "judge_model": "teacher_reasoning_primary",
+    "created_at": "2026-06-05T10:15:00Z"
+  },
+  "validation": {
+    "validated": true,
+    "validation_type": "judge_and_rules",
+    "tests_passed": null,
+    "static_checks_passed": null,
+    "secrets_detected": false
+  },
+  "metadata": {
+    "style_tags": [
+      "causal",
+      "technical",
+      "tradeoff_oriented"
+    ],
+    "target_adapter": "architecture",
+    "privacy_level": "normal"
+  }
+}
+
+Export targets:
+
+architecture-adapter.jsonl
+coding-adapter.jsonl
+common-lisp-adapter.jsonl
+smalltalk-adapter.jsonl
+agent-systems-adapter.jsonl
+investment-analysis-adapter.jsonl
+writing-style-adapter.jsonl
+
+⸻
+
+9. Dataset Export Manifest
+
+Every export must include a manifest file.
+
+Example:
+
+{
+  "schema_version": "1.0",
+  "dataset_export_id": "dsexp_20260605_772ab",
+  "name": "architecture-adapter-20260605",
+  "domain": "software_architecture",
+  "created_at": "2026-06-05T10:30:00Z",
+  "record_count": 1284,
+  "source_system": "llm-proxy-foundry",
+  "export_file": "architecture-adapter-20260605.jsonl",
+  "sha256": "abc123...",
+  "min_quality_score": 0.85,
+  "candidate_status": "approved",
+  "schema_versions": [
+    "1.0"
+  ],
+  "compatible_learner_versions": [
+    ">=1.0.0"
+  ]
+}
+
+The learner must reject an export if:
+
+* manifest is missing
+* checksum does not match
+* schema version is unsupported
+* record count does not match
+* required fields are missing
+
+⸻
+
+10. Learner Pipeline Components
+
+10.1 Dataset Ingestion
+
+Responsibilities:
+
+* scan configured export directories
+* import JSONL files
+* validate manifest
+* validate checksums
+* persist dataset metadata
+* detect duplicate imports
+* assign dataset version IDs
+
+Supported import modes:
+
+file_drop
+api_import
+event_triggered_import
+
+API endpoint:
+
+POST /datasets/import
+
+Example request:
+
+{
+  "dataset_export_id": "dsexp_20260605_772ab",
+  "manifest_path": "/proxy_exports/architecture-adapter-20260605.manifest.json",
+  "data_path": "/proxy_exports/architecture-adapter-20260605.jsonl"
+}
+
+⸻
+
+10.2 Dataset Validation
+
+Validation rules:
+
+* record must contain messages
+* messages must contain user and assistant turns
+* assistant response must be non-empty
+* metadata must contain domain
+* metadata must contain task type
+* quality score must meet configured threshold
+* approval status must be approved
+* export eligible must be true
+* record must not be rejected or blocked
+
+Optional validation:
+
+* no secret leakage
+* no API keys
+* no credentials
+* no private keys
+* no binary blobs
+* no malformed code fences
+* max token length not exceeded
+
+Records failing validation must be quarantined.
+
+⸻
+
+10.3 Dataset Normalization
+
+Responsibilities:
+
+* normalize whitespace
+* normalize role order
+* standardize system prompts
+* remove proxy-only metadata
+* preserve domain metadata
+* preserve provenance
+* truncate examples exceeding configured token limits
+* optionally split long conversations into smaller examples
+
+Example domain-specific system prompt:
+
+You are a senior Common Lisp, SBCL, and distributed systems engineer.
+
+⸻
+
+10.4 Deduplication
+
+Deduplicate at three levels:
+
+* exact duplicate
+* near duplicate
+* semantic duplicate
+
+Techniques:
+
+* SHA-256 hash for exact text
+* MinHash or SimHash for near duplicates
+* embedding similarity for semantic duplicates
+
+Default rule:
+
+If similarity > 0.95, keep the higher-quality example.
+
+⸻
+
+10.5 Dataset Splitting
+
+Create stable deterministic splits:
+
+train:      90%
+validation: 5%
+test:       5%
+
+Use:
+
+hash(proxy_candidate_id or normalized_prompt)
+
+The same example must always land in the same split unless the dataset version changes.
+
+⸻
+
+10.6 Curriculum Builder
+
+Support staged and weighted training.
+
+Example weighted sampling:
+
+coding                  35%
+software_architecture   25%
+common_lisp             10%
+smalltalk               10%
+agent_systems           10%
+investment_analysis      7%
+writing_style            3%
+
+⸻
+
+11. Training Pipeline
+
+11.1 Training Orchestrator
+
+Responsibilities:
+
+* create training runs
+* resolve base model
+* resolve dataset version
+* generate training config
+* launch training job
+* monitor progress
+* capture logs
+* capture metrics
+* resume from checkpoints
+* persist artifacts
+
+Initial supported training modes:
+
+lora
+qlora
+
+Future modes:
+
+full_finetune
+continued_pretraining
+dpo
+
+⸻
+
+11.2 LoRA Training
+
+Default for smaller and medium models.
+
+Example config:
+
+base_model: Qwen/Qwen2.5-Coder-14B-Instruct
+training_mode: lora
+lora:
+  r: 64
+  alpha: 128
+  dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+training:
+  epochs: 3
+  learning_rate: 0.0002
+  batch_size: 4
+  gradient_accumulation_steps: 4
+  max_seq_length: 8192
+  warmup_ratio: 0.03
+  weight_decay: 0.01
+  save_steps: 100
+  eval_steps: 100
+
+Outputs:
+
+adapter_model.safetensors
+adapter_config.json
+training_config.yaml
+metrics.json
+checkpoint directories
+
+⸻
+
+11.3 QLoRA Training
+
+Default for larger models or memory-constrained machines.
+
+Example config:
+
+base_model: Qwen/Qwen2.5-Coder-32B-Instruct
+training_mode: qlora
+quantization:
+  load_in_4bit: true
+  bnb_4bit_quant_type: nf4
+  bnb_4bit_use_double_quant: true
+  bnb_4bit_compute_dtype: bfloat16
+lora:
+  r: 32
+  alpha: 64
+  dropout: 0.05
+training:
+  epochs: 2
+  learning_rate: 0.0002
+  batch_size: 1
+  gradient_accumulation_steps: 16
+  max_seq_length: 8192
+
+⸻
+
+12. Evaluation Pipeline
+
+Every trained model must be evaluated before promotion.
+
+Evaluation types:
+
+* automatic benchmark
+* LLM judge
+* code execution
+* regression comparison
+* style comparison
+* latency benchmark
+* memory benchmark
+
+Evaluation domains:
+
+coding
+software_architecture
+common_lisp
+smalltalk
+agent_systems
+investment_analysis
+writing_style
+
+Benchmark format:
+
+{
+  "benchmark_id": "architecture_001",
+  "domain": "software_architecture",
+  "task_type": "architecture_decision",
+  "prompt": "Should this system use Postgres, Neo4j, or both?",
+  "reference_answer": "...",
+  "rubric": {
+    "correctness": 0.25,
+    "tradeoff_quality": 0.25,
+    "pragmatism": 0.20,
+    "risk_awareness": 0.15,
+    "style_alignment": 0.15
+  }
+}
+
+Benchmark groups:
+
+coding_regression
+architecture_decisions
+common_lisp_actor_model
+smalltalk_squeakjs
+agent_system_design
+investment_scenario_analysis
+writing_style_alignment
+
+⸻
+
+13. Code Validation Harness
+
+For coding benchmarks, the system should be able to:
+
+* clone or mount repository
+* apply generated patch
+* run formatter
+* run linter
+* run tests
+* measure pass/fail
+* capture logs
+* revert workspace
+
+Initial supported validation commands:
+
+pytest
+npm test
+mvn test
+gradle test
+sbcl script execution
+
+⸻
+
+14. Promotion Gate
+
+A model may only be promoted if:
+
+* all required evaluations complete
+* overall score meets threshold
+* domain score meets threshold
+* no critical regressions
+* latency is acceptable
+* memory usage is acceptable
+* artifacts are verified
+
+Example thresholds:
+
+promotion:
+  min_overall_score: 0.85
+  min_coding_pass_rate: 0.80
+  min_architecture_score: 0.85
+  min_style_score: 0.80
+  max_regression_allowed: 0.02
+
+Training states:
+
+created
+queued
+training
+failed
+completed
+evaluating
+candidate
+approved
+rejected
+deployed
+rolled_back
+retired
+
+A model may not enter approved unless evaluation succeeds.
+
+A model may not enter deployed unless deployment health checks succeed.
+
+⸻
+
+15. Deployment and Routing
+
+After approval, the learner deploys the model to a local runtime and registers it with the proxy.
+
+Proxy registration endpoint:
+
+POST /proxy/models/register
+
+Example payload:
+
+{
+  "model_registry_id": "model_paul_architecture_v1",
+  "model_alias": "paul-architecture-local-v1",
+  "base_model": "Qwen/Qwen2.5-Coder-14B-Instruct",
+  "adapter_type": "lora",
+  "adapter_path": "/models/adapters/paul-architecture-v1",
+  "runtime": "ollama",
+  "endpoint_url": "http://localhost:11434",
+  "domains": [
+    "software_architecture",
+    "coding"
+  ],
+  "task_types": [
+    "architecture_decision",
+    "code_review"
+  ],
+  "quality": {
+    "overall_score": 0.88,
+    "domain_scores": {
+      "software_architecture": 0.90
+    }
+  },
+  "status": "production",
+  "created_at": "2026-06-05T12:00:00Z"
+}
+
+The proxy must support these deployment strategies:
+
+manual
+shadow
+canary
+production
+rollback
+
+Shadow mode:
+
+Production model answers the user.
+Candidate model receives copied traffic silently.
+Proxy compares candidate output against production and teacher output.
+
+Canary mode:
+
+Candidate model receives limited real traffic.
+Example: 10% of eligible architecture prompts.
+
+Production mode:
+
+Candidate model becomes default for its domain.
+
+Rollback mode:
+
+Prior production model is restored.
+Routing policy is reverted.
+Rollback event is logged.
+
+⸻
+
+16. Runtime Monitoring
+
+The proxy must monitor deployed local models.
+
+Metrics:
+
+* request count
+* error rate
+* timeout rate
+* average latency
+* p95 latency
+* tokens per second
+* teacher disagreement rate
+* user retry rate
+* fallback rate
+* candidate capture rate
+
+Quality signals:
+
+* sampled judge score
+* teacher comparison score
+* code test pass rate
+* style alignment score
+* manual rejection rate
+
+If thresholds are breached, the proxy should demote or roll back the model.
+
+⸻
+
+17. Event Contract
+
+The proxy and learner should communicate through APIs and events.
+
+Recommended first version:
+
+Postgres outbox table + polling
+
+Future options:
+
+Redis Streams
+Kafka
+NATS
+
+Event types:
+
+candidate.approved
+dataset.exported
+dataset.imported
+training.started
+training.completed
+training.failed
+evaluation.completed
+model.approved
+model.deployed
+model.registered
+model.rolled_back
+routing.updated
+
+Example event:
+
+{
+  "event_id": "evt_20260605_abc99",
+  "event_type": "dataset.exported",
+  "occurred_at": "2026-06-05T10:31:00Z",
+  "source": "llm-proxy-foundry",
+  "payload": {
+    "dataset_export_id": "dsexp_20260605_772ab",
+    "manifest_path": "/proxy_exports/architecture-adapter-20260605.manifest.json",
+    "data_path": "/proxy_exports/architecture-adapter-20260605.jsonl"
+  }
+}
+
+⸻
+
+18. Shared Data Model
+
+Use one Postgres instance with separate schemas for first implementation:
+
+proxy.*
+learner.*
+integration.*
+
+18.1 Proxy Tables
+
+proxy.model_provider
+proxy.model_registry
+proxy.request_log
+proxy.model_response
+proxy.evaluation_result
+proxy.training_candidate
+proxy.dataset_export
+proxy.user_preference
+proxy.repo_context
+
+18.2 Learner Tables
+
+learner.dataset_import
+learner.dataset_record
+learner.dataset_version
+learner.training_run
+learner.training_metric
+learner.evaluation_run
+learner.evaluation_result
+learner.model_registry
+learner.deployment_record
+
+18.3 Integration Tables
+
+integration.integration_event
+integration.integration_contract_version
+integration.routing_policy_version
+integration.model_performance_sample
+
+⸻
+
+19. Version Compatibility
+
+Every exported dataset must declare:
+
+schema_version
+source_proxy_version
+compatible_learner_versions
+
+Every registered model must declare:
+
+model_contract_version
+learner_version
+compatible_proxy_versions
+
+Compatibility rules:
+
+same major version required
+minor version may be backward compatible
+patch version is compatible
+
+Receiving systems must reject incompatible payloads.
+
+⸻
+
+20. Security Requirements
+
+The system must:
+
+* store API keys outside source code
+* support environment-variable or secret-manager configuration
+* redact secrets from logs
+* support local-only mode
+* support per-provider enable/disable flags
+* support request size limits
+* support timeout limits
+* support rate limits
+* never export rejected candidates
+* mark proprietary/private context in metadata
+* reject training records containing secrets
+* support simple bearer-token auth for first local version
+
+⸻
+
+21. Configuration Example
+
+server:
+  host: 0.0.0.0
+  proxy_port: 8000
+  learner_port: 8100
+database:
+  url: postgresql://llm:llm@localhost:5432/llm_learning_system
+redis:
+  url: redis://localhost:6379/0
+routing:
+  default_model: proxy-auto
+  privacy_default: local_first
+  record_by_default: false
+local_models:
+  coding:
+    provider: ollama
+    model: qwen2.5-coder:14b
+  architecture:
+    provider: ollama
+    model: qwen2.5:32b
+teachers:
+  primary_reasoning:
+    provider: openai
+    model: gpt-5.5
+  architecture:
+    provider: anthropic
+    model: claude-opus
+  coding:
+    provider: openai
+    model: codex-class-model
+judge:
+  provider: openai
+  model: gpt-5.5
+paths:
+  proxy_exports: ./proxy_exports
+  datasets: ./datasets
+  models: ./models
+  checkpoints: ./checkpoints
+  reports: ./reports
+training:
+  default_framework: unsloth
+  default_mode: qlora
+  default_max_seq_length: 8192
+  default_epochs: 3
+  default_learning_rate: 0.0002
+dataset:
+  min_quality_score: 0.85
+  train_split: 0.90
+  validation_split: 0.05
+  test_split: 0.05
+promotion:
+  min_overall_score: 0.85
+  max_regression_allowed: 0.02
+deployment:
+  default_target: ollama
+  proxy_registry_url: http://localhost:8000/proxy/models/register
+
+⸻
+
+22. Repository Structure
+
+llm-proxy-learning-system/
+  app/
+    main.py
+    config.py
+    api/
+      openai_compatible.py
+      proxy_native.py
+      datasets.py
+      training.py
+      evaluation.py
+      models.py
+      deployment.py
+    proxy/
+      router.py
+      classifier.py
+      policy.py
+      ensemble.py
+      judge.py
+      recorder.py
+      exporter.py
+    providers/
+      base.py
+      ollama.py
+      openai_provider.py
+      anthropic_provider.py
+      llama_cpp.py
+      vllm.py
+      mlx.py
+    datasets/
+      ingestion.py
+      validation.py
+      normalization.py
+      dedupe.py
+      splitter.py
+      curriculum.py
+    training/
+      orchestrator.py
+      lora_trainer.py
+      qlora_trainer.py
+      unsloth_runner.py
+      axolotl_runner.py
+      checkpointing.py
+    evaluation/
+      runner.py
+      benchmark_loader.py
+      judge.py
+      code_validation.py
+      style_scoring.py
+      investment_scoring.py
+    registry/
+      model_registry.py
+      artifact_store.py
+    deployment/
+      manager.py
+      ollama.py
+      vllm.py
+      llama_cpp.py
+      mlx.py
+    integration/
+      events.py
+      outbox.py
+      contracts.py
+      routing_policy.py
+      performance.py
+    db/
+      session.py
+      models.py
+      migrations/
+    schemas/
+      chat.py
+      provider.py
+      training.py
+      dataset.py
+      evaluation.py
+      registry.py
+      integration.py
+    services/
+      embeddings.py
+      validation.py
+      cost.py
+      secrets.py
+    tests/
+  benchmarks/
+    coding/
+    architecture/
+    common_lisp/
+    smalltalk/
+    agent_systems/
+    investment/
+    style/
+  scripts/
+    import_dataset.py
+    build_dataset.py
+    export_dataset.py
+    train_lora.py
+    train_qlora.py
+    evaluate_model.py
+    deploy_model.py
+  proxy_exports/
+  datasets/
+  exports/
+  models/
+  checkpoints/
+  reports/
+  docker-compose.yml
+  pyproject.toml
+  README.md
+
+⸻
+
+23. Implementation Phases
+
+Phase 1: Minimal Runtime Proxy
+
+Deliver:
+
+* FastAPI service
+* config loader
+* database schema and migrations
+* /v1/chat/completions
+* local model adapter
+* one closed provider adapter
+* request logging
+* basic routing aliases
+
+Acceptance criteria:
+
+* IDE or CLI can call proxy as OpenAI-compatible endpoint.
+* Proxy can route to local model.
+* Proxy can route to teacher model.
+* Requests and responses are stored.
+
+⸻
+
+Phase 2: Teacher Ensemble
+
+Deliver:
+
+* multiple teacher adapters
+* /proxy/ensemble
+* judge prompt
+* synthesized final answer
+* response scoring
+
+Acceptance criteria:
+
+* One prompt can be sent to multiple teachers.
+* Proxy returns synthesized best answer.
+* Teacher outputs and judge critique are stored.
+
+⸻
+
+Phase 3: Training Candidate Pipeline
+
+Deliver:
+
+* training candidate table
+* candidate lifecycle
+* approval/rejection endpoints
+* JSONL export
+* export manifest
+* checksum generation
+
+Acceptance criteria:
+
+* Approved examples can be exported.
+* Export includes manifest.
+* Exported JSONL is fine-tuning ready.
+
+⸻
+
+Phase 4: Dataset Pipeline
+
+Deliver:
+
+* learner import endpoint
+* manifest validation
+* schema validation
+* normalization
+* deduplication
+* deterministic splitting
+* dataset versioning
+
+Acceptance criteria:
+
+* Proxy JSONL exports can be imported.
+* Invalid records are quarantined.
+* Valid records are versioned.
+* Train/validation/test files are created.
+
+⸻
+
+Phase 5: Training Pipeline
+
+Deliver:
+
+* LoRA trainer
+* QLoRA trainer
+* training config generation
+* checkpointing
+* metric capture
+* artifact storage
+
+Acceptance criteria:
+
+* A small model can be fine-tuned from imported data.
+* Training metrics are persisted.
+* Adapter artifacts are saved.
+
+⸻
+
+Phase 6: Evaluation and Promotion
+
+Deliver:
+
+* benchmark loader
+* evaluation runner
+* judge scoring
+* code validation harness
+* style scoring
+* investment reasoning scoring
+* promotion gate
+* model registry
+
+Acceptance criteria:
+
+* A trained adapter is evaluated.
+* Scores are persisted.
+* Passing models can be approved.
+* Failing models are rejected.
+* Previous production models remain available.
+
+⸻
+
+Phase 7: Deployment Integration
+
+Deliver:
+
+* deployment manager
+* local runtime deployment adapter
+* proxy model registration
+* routing policy versioning
+* shadow routing
+* canary routing
+* fallback behavior
+* rollback endpoint
+
+Acceptance criteria:
+
+* Approved model deploys locally.
+* Learner registers model with proxy.
+* Proxy shadow-routes traffic.
+* Proxy canary-routes traffic.
+* Proxy falls back on error.
+* Rollback restores prior model.
+
+⸻
+
+Phase 8: Continuous Improvement Loop
+
+Deliver:
+
+* event outbox
+* dataset.exported event
+* learner import event handler
+* model performance sampling
+* teacher comparison sampling
+* scheduled retraining hooks
+
+Acceptance criteria:
+
+* New proxy exports can trigger a dataset version.
+* New model can be compared against current production model.
+* Promotion remains gated.
+* Local model responses can become future training candidates.
+
+⸻
+
+24. Coding Agent Build Order
+
+The coding agent should build the system in this order:
+
+1. Create repository structure.
+2. Implement configuration loader.
+3. Implement database schema and migrations.
+4. Implement normalized request/response schemas.
+5. Implement local model provider adapter.
+6. Implement one closed model provider adapter.
+7. Implement /v1/chat/completions.
+8. Implement request and response logging.
+9. Implement simple routing aliases.
+10. Implement teacher ensemble.
+11. Implement judge scoring.
+12. Implement training candidate persistence.
+13. Implement approval/rejection workflow.
+14. Implement JSONL export.
+15. Implement export manifest and checksum.
+16. Implement learner dataset import.
+17. Implement manifest validation.
+18. Implement dataset validation.
+19. Implement dataset normalization.
+20. Implement deduplication.
+21. Implement deterministic splitting.
+22. Implement dataset versioning.
+23. Implement LoRA training runner.
+24. Implement QLoRA training runner.
+25. Implement training metric capture.
+26. Implement benchmark loader.
+27. Implement evaluation runner.
+28. Implement model registry.
+29. Implement promotion gate.
+30. Implement deployment manager.
+31. Implement proxy model registration.
+32. Implement routing policy versioning.
+33. Implement shadow routing.
+34. Implement canary routing.
+35. Implement fallback behavior.
+36. Implement rollback.
+37. Implement integration events.
+38. Add Docker Compose.
+39. Add tests.
+40. Add README with local startup instructions.
+
+⸻
+
+25. Minimum Viable Integrated Flow
+
+The first complete version is acceptable when:
+
+1. A client can call /v1/chat/completions with model=proxy-local.
+2. A client can call /v1/chat/completions with model=proxy-teacher.
+3. A client can call /proxy/ensemble and receive a synthesized answer.
+4. All requests and responses are persisted.
+5. A response can be promoted to a training candidate.
+6. A training candidate can be approved.
+7. Approved candidates can be exported as JSONL.
+8. Export manifest is valid.
+9. Learner imports the export.
+10. Learner creates a dataset version.
+11. Learner launches a LoRA training run.
+12. Learner launches a QLoRA training run.
+13. Training metrics are stored.
+14. Adapter artifacts are stored.
+15. Evaluation benchmarks run.
+16. Scores are stored.
+17. Model fails promotion if below threshold.
+18. Model passes promotion if above threshold.
+19. Approved model deploys to local runtime.
+20. Model registers with proxy.
+21. Proxy shadow-routes traffic to model.
+22. Proxy canary-routes traffic to model.
+23. Proxy falls back to prior model on error.
+24. Rollback restores prior model.
+25. New model responses can become future training candidates.
+
+⸻
+
+26. Failure Handling
+
+Proxy Export Failure
+
+If export fails:
+
+* candidate statuses remain approved
+* no dataset export event is emitted
+* error is logged
+* retry is allowed
+
+Learner Import Failure
+
+If import fails:
+
+* dataset is marked failed
+* invalid records are quarantined
+* proxy is notified
+* training is not started
+
+Training Failure
+
+If training fails:
+
+* training run status becomes failed
+* artifacts are retained for inspection
+* proxy remains unchanged
+* training.failed event is emitted
+
+Evaluation Failure
+
+If evaluation fails:
+
+* model cannot be promoted
+* training run status becomes evaluation failed
+* proxy remains unchanged
+
+Deployment Failure
+
+If deployment fails:
+
+* model status becomes deployment failed
+* proxy routing remains unchanged
+* rollback is not required
+
+Runtime Failure
+
+If deployed model fails:
+
+* proxy falls back to previous model or teacher
+* failure event is emitted
+* rollback may be triggered
+
+⸻
+
+27. Future Enhancements
+
+Potential future capabilities:
+
+* web UI for reviewing training candidates
+* semantic search over prior interactions
+* prompt template registry
+* adapter registry
+* automatic eval suites
+* benchmark dashboards
+* repository indexing
+* MCP tool integration
+* personal style model
+* active learning loop
+* multi-agent debate mode
+* local-only privacy mode
+* cost optimizer
+* model performance leaderboard
+* DPO training
+* preference optimization
+* continued pretraining
+* automatic synthetic benchmark generation
+* adapter merging
+* multi-adapter composition
+* RAG plus fine-tune hybrid training
+* distributed training
+* Apple Silicon MLX training path
+
+⸻
+
+28. Design Principle
+
+The system exists to convert valuable interactions into durable capability.
+
+The proxy captures and validates expertise.
+
+The learner pipeline converts that expertise into trainable datasets.
+
+The training system produces local specialist models.
+
+The evaluation system prevents regressions.
+
+The deployment system introduces improved models safely.
+
+The routing system controls exposure.
+
+The rollback system preserves stability.
+
+The long-term goal is to create local models that encode:
+
+teacher-model expertise
++
+personal domain judgment
++
+repository-specific knowledge
++
+validated coding behavior
++
+architecture reasoning
++
+investment reasoning frameworks
++
+writing and explanation style
+
+The result should be smaller, cheaper, local, private, domain-specialized models that improve continuously without compromising runtime reliability.
+
+The proxy should not simply call models.
+
+The learner should not simply train models.
+
+Together they should form a reliable, auditable, reversible, self-improving learning system.

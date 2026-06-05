@@ -1,0 +1,4 @@
+resources:
+  - ../../base
+commonLabels:
+  app.kubernetes.io/environment: aws

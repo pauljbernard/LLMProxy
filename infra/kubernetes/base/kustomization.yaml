@@ -1,0 +1,14 @@
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - serviceaccount.yaml
+  - api-deployment.yaml
+  - api-service.yaml
+  - worker-deployment.yaml
+  - scheduler-deployment.yaml
+  - ingress.yaml
+  - hpa-api.yaml
+  - hpa-worker.yaml
+  - network-policy.yaml
+  - pdb-api.yaml
+  - pdb-worker.yaml

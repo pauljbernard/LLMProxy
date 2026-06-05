@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: llmproxy-config
+  namespace: llmproxy
+  labels:
+    app.kubernetes.io/name: llmproxy
+    app.kubernetes.io/component: config
+    app.kubernetes.io/part-of: llmproxy
+    app.kubernetes.io/environment: base
+data:
+  LLMPROXY_ENV: production
+  LLMPROXY_API_HOST: 0.0.0.0
+  LLMPROXY_API_PORT: "8000"

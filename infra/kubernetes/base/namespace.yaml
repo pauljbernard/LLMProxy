@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: llmproxy
+  labels:
+    app.kubernetes.io/name: llmproxy
+    app.kubernetes.io/part-of: llmproxy

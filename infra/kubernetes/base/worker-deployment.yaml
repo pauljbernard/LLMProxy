@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llmproxy-worker
+  namespace: llmproxy
+  labels:
+    app.kubernetes.io/name: llmproxy
+    app.kubernetes.io/component: worker
+    app.kubernetes.io/part-of: llmproxy
+    app.kubernetes.io/environment: base
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: llmproxy
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: llmproxy
+        app.kubernetes.io/component: worker
+        app.kubernetes.io/part-of: llmproxy
+        app.kubernetes.io/environment: base
+    spec:
+      serviceAccountName: llmproxy
+      containers:
+        - name: worker
+          image: llmproxy:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "app.main"]
+          envFrom:
+            - configMapRef:
+                name: llmproxy-config
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"

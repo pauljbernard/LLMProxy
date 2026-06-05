@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RoutingDecision",
+  "type": "object",
+  "required": [
+    "routing_decision_id",
+    "session_id",
+    "request_id",
+    "policy_version",
+    "selected_provider",
+    "selected_provider_family",
+    "selected_model",
+    "selected_mode",
+    "ranked_alternatives",
+    "decision_rationale",
+    "predicted_cost_class",
+    "predicted_latency_class",
+    "fallback_chain"
+  ],
+  "properties": {
+    "routing_decision_id": { "type": "string" },
+    "session_id": { "type": "string" },
+    "request_id": { "type": "string" },
+    "policy_version": { "type": "string" },
+    "selected_provider": { "type": "string" },
+    "selected_provider_family": { "type": "string" },
+    "selected_model": { "type": "string" },
+    "selected_mode": { "type": "string" },
+    "ranked_alternatives": { "type": "array" },
+    "decision_rationale": { "type": "string" },
+    "predicted_cost_class": { "type": "string" },
+    "predicted_latency_class": { "type": "string" },
+    "fallback_chain": { "type": "array" }
+  }
+}
