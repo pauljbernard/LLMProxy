@@ -1,0 +1,84 @@
+from pathlib import Path
+
+from app.config import Settings
+from app.db.models import DatasetVersion, TrainingRun
+from app.evaluation.runner import run_evaluation
+from app.schemas.evaluation import EvaluationRunRequest
+
+
+class FakeSession:
+    def __init__(self, training_run: TrainingRun, dataset_version: DatasetVersion) -> None:
+        self.training_run = training_run
+        self.dataset_version = dataset_version
+        self.added: list[object] = []
+
+    def get(self, model, object_id: str):
+        if model is TrainingRun and object_id == self.training_run.id:
+            return self.training_run
+        if model is DatasetVersion and object_id == self.dataset_version.id:
+            return self.dataset_version
+        return None
+
+    def add(self, item: object) -> None:
+        self.added.append(item)
+
+
+def build_training_run() -> TrainingRun:
+    return TrainingRun(
+        id="train_1",
+        dataset_version_id="dsv_1",
+        base_model="Qwen/Qwen2.5-Coder-7B-Instruct",
+        training_mode="lora",
+        status="completed",
+        training_config_json={},
+        metrics_json={},
+        artifact_path="/tmp/adapter.bin",
+    )
+
+
+def build_dataset_version() -> DatasetVersion:
+    return DatasetVersion(
+        id="dsv_1",
+        domain="coding",
+        version_name="coding-dsv_1",
+        source_import_id="dsimp_1",
+        train_path="/tmp/train.jsonl",
+        validation_path="/tmp/validation.jsonl",
+        test_path="/tmp/test.jsonl",
+        record_count=6,
+    )
+
+
+def test_run_evaluation_persists_result_and_package(tmp_path: Path) -> None:
+    session = FakeSession(build_training_run(), build_dataset_version())
+    settings = Settings(llmproxy_models_path=str(tmp_path))
+
+    result = run_evaluation(
+        session,
+        request=EvaluationRunRequest(training_run_id="train_1"),
+        settings=settings,
+    )
+
+    assert result.domain == "coding"
+    assert result.promotion_status == "approved"
+    assert Path(result.package_manifest_path).exists()
+    assert len(session.added) == 3
+
+
+def test_run_evaluation_rejects_missing_training_run(tmp_path: Path) -> None:
+    session = FakeSession(build_training_run(), build_dataset_version())
+    settings = Settings(llmproxy_models_path=str(tmp_path))
+
+    session.training_run = build_training_run()
+    session.training_run.id = "other"
+
+    try:
+        run_evaluation(
+            session,
+            request=EvaluationRunRequest(training_run_id="train_1"),
+            settings=settings,
+        )
+    except ValueError as exc:
+        assert "Training run 'train_1' was not found" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError for missing training run")

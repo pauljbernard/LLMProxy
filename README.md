@@ -1,6 +1,6 @@
 # llmProxy
 
-This repository is currently in the specification phase for a SpecKit-inspired, spec-driven development project.
+This repository uses a SpecKit-inspired, spec-driven development approach and now contains both the implementation codebase and the governing specification set.
 
 The primary implementation baseline is documented through a custom SpecKit-aligned specification set in [specs/001-llmproxy-foundation](./specs/001-llmproxy-foundation) and the extended reference library in [docs/specs](./docs/specs/README.md).
 
@@ -26,6 +26,83 @@ The project is not trying to build a frontier foundation model or a full AI ecos
 ## Architecture
 
 ![llmProxy architecture](docs/assets/architecture-diagram.svg)
+
+## Operator CLI
+
+`llmProxy` includes a utilitarian admin CLI for configuration inspection and day-to-day operations.
+
+The CLI entrypoint is:
+
+```bash
+llmproxy-admin --help
+```
+
+If you have not installed the package script yet, you can run it directly from the repo:
+
+```bash
+python3 -m app.cli --help
+```
+
+Common commands:
+
+```bash
+python3 -m app.cli health
+python3 -m app.cli config show
+python3 -m app.cli config validate
+python3 -m app.cli models list --proxy
+python3 -m app.cli models local
+python3 -m app.cli deploy policies
+python3 -m app.cli candidates list
+python3 -m app.cli training list
+python3 -m app.cli evaluation list
+python3 -m app.cli jobs list
+python3 -m app.cli events list
+python3 -m app.cli scheduler run-once
+```
+
+Configuration file updates can be written to an env file directly:
+
+```bash
+python3 -m app.cli config set LLMPROXY_OPENAI_API_KEY your-key-here --env-file .env.local
+```
+
+To validate the local stack with Compose, start the services and then use the CLI against the running environment:
+
+```bash
+docker compose -f infra/compose/docker-compose.yml up -d --no-build
+python3 -m app.cli health
+python3 -m app.cli models list --proxy
+python3 -m app.cli jobs list
+```
+
+The Compose Postgres service is published on host port `15432` to avoid conflicts with any other local PostgreSQL instance already using `5432`.
+For host-side tools such as pgAdmin, use:
+
+```text
+Host: 127.0.0.1
+Port: 15432
+Database: llmproxy
+Username: llm
+Password: llm
+Maintenance database: postgres
+```
+
+## Operator Console
+
+`llmProxy` also includes a visual operator console served by the API runtime:
+
+```bash
+http://127.0.0.1:8000/admin
+```
+
+The console is designed to cover the same core operator surface as the admin CLI:
+- health and configuration
+- proxy chat, ensemble, embeddings, and request history
+- model registration and deployment control
+- candidate review, exports, dataset import, and training
+- evaluation, KPI review, jobs, events, and scheduler actions
+
+The browser console uses the same bearer-token model as the API and expects an operator or automation token to be entered in the top bar before making authenticated requests.
 
 ## License
 

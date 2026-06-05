@@ -2,7 +2,7 @@
 
 from time import time
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class ChatMessage(BaseModel):
@@ -23,6 +23,13 @@ class ChatCompletionRequest(BaseModel):
     temperature: float = 0.2
     max_tokens: int = 1024
     metadata: RequestMetadata
+
+    @field_validator("messages")
+    @classmethod
+    def validate_messages(cls, value: list[ChatMessage]) -> list[ChatMessage]:
+        if not value:
+            raise ValueError("messages must contain at least one item")
+        return value
 
 
 class UsageInfo(BaseModel):
@@ -51,13 +58,19 @@ class ChatCompletionResponse(BaseModel):
     usage: UsageInfo
 
     @classmethod
-    def from_request(cls, request: ChatCompletionRequest, content: str) -> "ChatCompletionResponse":
+    def from_request(
+        cls,
+        request: ChatCompletionRequest,
+        content: str,
+        response_id: str = "chatcmpl_generated",
+        resolved_model: str | None = None,
+    ) -> "ChatCompletionResponse":
         prompt_tokens = sum(len(message.content.split()) for message in request.messages)
         completion_tokens = len(content.split())
         return cls(
-            id="chatcmpl_starter",
+            id=response_id,
             created=int(time()),
-            model=request.model,
+            model=resolved_model or request.model,
             choices=[Choice(message=ChoiceMessage(content=content))],
             usage=UsageInfo(
                 prompt_tokens=prompt_tokens,
@@ -70,3 +83,31 @@ class ChatCompletionResponse(BaseModel):
 class ModelInfo(BaseModel):
     id: str = Field(..., alias="id")
     object: str = "model"
+
+
+class EmbeddingRequestInput(BaseModel):
+    text: str
+
+
+class EmbeddingRequest(BaseModel):
+    model: str
+    input: str | list[str] | list[EmbeddingRequestInput]
+    user: str | None = None
+
+
+class EmbeddingVector(BaseModel):
+    object: str = "embedding"
+    embedding: list[float]
+    index: int
+
+
+class EmbeddingUsage(BaseModel):
+    prompt_tokens: int
+    total_tokens: int
+
+
+class EmbeddingResponse(BaseModel):
+    object: str = "list"
+    data: list[EmbeddingVector]
+    model: str
+    usage: EmbeddingUsage

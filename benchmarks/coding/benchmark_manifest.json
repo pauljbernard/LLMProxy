@@ -1,0 +1,11 @@
+{
+  "benchmark_version": "1.0",
+  "benchmark_group": "coding-core",
+  "domain": "coding",
+  "task_types": ["code_review", "bug_fix"],
+  "record_count": 2,
+  "scoring_method": "code_validation",
+  "source": "llmproxy-internal",
+  "created_at": "2026-06-05T00:00:00Z",
+  "frontier_baseline_set": ["claude-3-5-sonnet", "gpt-5.5"]
+}

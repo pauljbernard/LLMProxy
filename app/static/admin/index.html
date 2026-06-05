@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>llmProxy Operator Console</title>
+    <link rel="stylesheet" href="/admin/static/styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="eyebrow">Operator Console</div>
+          <h1>llmProxy</h1>
+          <p>Visual control surface for proxy, training, deployment, jobs, and events.</p>
+        </div>
+        <nav class="nav">
+          <button class="nav-link active" data-panel="overview">Overview</button>
+          <button class="nav-link" data-panel="proxy">Proxy</button>
+          <button class="nav-link" data-panel="models">Models & Deployment</button>
+          <button class="nav-link" data-panel="datasets">Datasets & Training</button>
+          <button class="nav-link" data-panel="evaluation">Evaluation & KPI</button>
+          <button class="nav-link" data-panel="operations">Operations</button>
+          <button class="nav-link" data-panel="ops">Jobs & Events</button>
+        </nav>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div class="auth-strip">
+            <label>
+              Bearer Token
+              <input id="token-input" type="password" placeholder="Operator or automation token" />
+            </label>
+            <div class="actions">
+              <button id="save-token" class="button accent">Save Token</button>
+              <button id="clear-token" class="button ghost">Clear</button>
+              <button id="check-connection" class="button">Check Connection</button>
+            </div>
+          </div>
+          <div id="status-pill" class="status-pill">Disconnected</div>
+        </header>
+
+        <section class="panel active" data-panel="overview">
+          <div class="section-header">
+            <div>
+              <div class="eyebrow">Environment</div>
+              <h2>Overview & Configuration</h2>
+            </div>
+            <div class="inline-actions">
+              <button class="button" data-action="refresh-health">Refresh Health</button>
+              <button class="button" data-action="refresh-config">Refresh Config</button>
+              <button class="button" data-action="validate-config">Validate Config</button>
+            </div>
+          </div>
+          <div class="grid two">
+            <div class="card">
+              <h3>Health</h3>
+              <pre id="health-output" class="output"></pre>
+            </div>
+            <div class="card">
+              <h3>Config</h3>
+              <pre id="config-output" class="output"></pre>
+            </div>
+          </div>
+          <div class="card">
+            <h3>Set Config Value</h3>
+            <form id="config-set-form" class="form-inline">
+              <input name="key" placeholder="LLMPROXY_OPENAI_MODEL" required />
+              <input name="value" placeholder="gpt-5.5" required />
+              <input name="env_file" placeholder=".env.local" value=".env.local" />
+              <button class="button accent" type="submit">Update Config</button>
+            </form>
+          </div>
+        </section>
+
+        <section class="panel" data-panel="proxy">
+          <div class="section-header">
+            <div>
+              <div class="eyebrow">Runtime</div>
+              <h2>Proxy Operations</h2>
+            </div>
+          </div>
+          <div class="grid two">
+            <div class="card">
+              <h3>Chat / Ensemble</h3>
+              <form id="chat-form" class="stack">
+                <div class="form-inline">
+                  <input name="session_id" placeholder="session id" required />
+                  <input name="domain_hint" placeholder="domain hint" />
+                  <input name="task_type_hint" placeholder="task type hint" />
+                </div>
+                <div class="form-inline">
+                  <input name="model" value="proxy-auto" />
+                  <input name="temperature" value="0.2" />
+                  <input name="max_tokens" value="1024" />
+                </div>
+                <textarea name="messages" rows="8" placeholder="user:Review this patch.&#10;assistant:Previous context..."></textarea>
+                <div class="inline-actions">
+                  <button class="button accent" type="submit" data-mode="chat">Run Chat</button>
+                  <button class="button" type="submit" data-mode="ensemble">Run Ensemble</button>
+                </div>
+              </form>
+              <pre id="chat-output" class="output tall"></pre>
+            </div>
+            <div class="card">
+              <h3>Embeddings</h3>
+              <form id="embeddings-form" class="stack">
+                <input name="model" value="text-embedding-3-small" />
+                <textarea name="inputs" rows="8" placeholder="one input per line"></textarea>
+                <button class="button accent" type="submit">Run Embeddings</button>
+              </form>
+              <pre id="embeddings-output" class="output tall"></pre>
+            </div>
+          </div>
+          <div class="grid two">
+            <div class="card">
+              <div class="card-header">
+                <h3>Request History</h3>
+                <button class="button" id="refresh-requests">Refresh</button>
+              </div>
+              <form id="request-filter-form" class="form-inline compact">
+                <input name="session_id" placeholder="session id" />
+                <input name="domain" placeholder="domain" />
+                <input name="task_type" placeholder="task type" />
+                <button class="button" type="submit">Filter</button>
+              </form>
+              <div id="requests-table" class="table-wrap"></div>
+            </div>
+            <div class="card">
+              <h3>Request Detail</h3>
+              <pre id="request-detail-output" class="output tall"></pre>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel" data-panel="models">
+          <div class="section-header">
+            <div>
+              <div class="eyebrow">Registry</div>
+              <h2>Models & Deployment</h2>
+            </div>
+            <div class="inline-actions">
+              <button class="button" id="refresh-models">Refresh Models</button>
+              <button class="button" id="refresh-local-models">Refresh Local</button>
+              <button class="button" id="refresh-policies">Refresh Policies</button>
+            </div>
+          </div>
+          <div class="grid three">
+            <div class="card"><h3>Proxy Models</h3><pre id="models-output" class="output medium"></pre></div>
+            <div class="card"><h3>Local Packages</h3><pre id="local-models-output" class="output medium"></pre></div>
+            <div class="card"><h3>Routing Policies</h3><pre id="policies-output" class="output medium"></pre></div>
+          </div>
+          <div class="grid two">
+            <div class="card">
+              <h3>Register Model Package</h3>
+              <form id="model-register-form" class="stack">
+                <div class="form-inline"><input name="model_registry_id" placeholder="registry id" required /><input name="model_alias" placeholder="model alias" required /></div>
+                <div class="form-inline"><input name="base_model" placeholder="base model" required /><input name="adapter_type" placeholder="lora" required /></div>
+                <div class="form-inline"><input name="adapter_path" placeholder="/data/models/model/adapter.bin" required /><input name="runtime" placeholder="ollama" required /></div>
+                <input name="endpoint_url" placeholder="http://localhost:11434" required />
+                <input name="domains" placeholder="coding,software_architecture" required />
+                <input name="task_types" placeholder="code_review,design_review" required />
+                <input name="status" value="approved" />
+                <button class="button accent" type="submit">Register Model</button>
+              </form>
+              <pre id="model-register-output" class="output"></pre>
+            </div>
+            <div class="card">
+              <h3>Deploy / Roll Back</h3>
+              <form id="deploy-form" class="stack">
+                <div class="form-inline"><input name="model_alias" placeholder="model alias" required /><select name="deployment_mode"><option>shadow</option><option>canary</option><option selected>production</option></select></div>
+                <input name="domains" placeholder="optional domains csv" />
+                <input name="task_types" placeholder="optional task types csv" />
+                <input name="canary_percent" placeholder="0.0" value="0.0" />
+                <div class="inline-actions">
+                  <button class="button accent" type="submit" data-mode="activate">Activate</button>
+                  <button class="button" type="submit" data-mode="rollback">Rollback</button>
+                </div>
+              </form>
+              <pre id="deploy-output" class="output"></pre>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel" data-panel="datasets">
+          <div class="section-header">
+            <div>
+              <div class="eyebrow">Learning Loop</div>
+              <h2>Candidates, Datasets & Training</h2>
+            </div>
+            <div class="inline-actions">
+              <button class="button" id="refresh-candidates">Refresh Candidates</button>
+              <button class="button" id="refresh-exports">Refresh Exports</button>
+              <button class="button" id="refresh-dataset-imports">Refresh Imports</button>
+              <button class="button" id="refresh-dataset-versions">Refresh Versions</button>
+            </div>
+          </div>
+          <div class="grid two">
+            <div class="card">
+              <h3>Training Candidates</h3>
+              <div id="candidates-table" class="table-wrap"></div>
+            </div>
+            <div class="card">
+              <h3>Exports</h3>
+              <form id="exports-filter-form" class="form-inline compact compact-bottom">
+                <input name="domain" placeholder="domain" />
+                <input name="limit" placeholder="20" value="20" />
+                <button class="button" type="submit">Filter</button>
+              </form>
+              <div id="exports-table" class="table-wrap"></div>
+              <pre id="exports-output" class="output"></pre>
+              <form id="export-form" class="stack compact-top">
+                <div class="form-inline"><input name="domain" placeholder="coding" required /><input name="name" placeholder="coding-adapter" /></div>
+                <input name="min_quality_score" value="0.0" />
+                <button class="button accent" type="submit">Create Export</button>
+              </form>
+            </div>
+          </div>
+          <div class="grid two">
+            <div class="card">
+              <h3>Dataset Imports / Versions</h3>
+              <form id="dataset-imports-filter-form" class="form-inline compact compact-bottom">
+                <input name="limit" placeholder="20" value="20" />
+                <button class="button" type="submit">Filter Imports</button>
+              </form>
+              <div id="dataset-imports-table" class="table-wrap compact-bottom"></div>
+              <form id="dataset-versions-filter-form" class="form-inline compact compact-bottom">
+                <input name="domain" placeholder="domain" />
+                <input name="limit" placeholder="20" value="20" />
+                <button class="button" type="submit">Filter Versions</button>
+              </form>
+              <div id="dataset-versions-table" class="table-wrap"></div>
+              <pre id="dataset-output" class="output"></pre>
+              <form id="dataset-import-form" class="stack compact-top">
+                <input name="dataset_export_id" placeholder="dataset export id" required />
+                <input name="manifest_path" placeholder="/data/exports/export.manifest.json" required />
+                <input name="data_path" placeholder="/data/exports/export.jsonl" required />
+                <button class="button accent" type="submit">Import Dataset</button>
+              </form>
+            </div>
+            <div class="card">
+              <h3>Training Runs</h3>
+              <div class="inline-actions compact-bottom">
+                <button class="button" id="refresh-training">Refresh Training Runs</button>
+              </div>
+              <form id="training-filter-form" class="form-inline compact compact-bottom">
+                <input name="status" placeholder="status" />
+                <input name="base_model" placeholder="base model" />
+                <button class="button" type="submit">Filter</button>
+              </form>
+              <div id="training-table" class="table-wrap"></div>
+              <pre id="training-output" class="output"></pre>
+              <form id="training-form" class="stack compact-top">
+                <input name="dataset_version_id" placeholder="dataset version id" required />
+                <div class="form-inline"><input name="base_model" placeholder="gpt-5.5" required /><select name="training_mode"><option>lora</option><option>qlora</option></select></div>
+                <div class="form-inline"><input name="epochs" value="3" /><input name="learning_rate" value="0.0002" /><input name="adapter_name" placeholder="optional adapter name" /></div>
+                <button class="button accent" type="submit">Run Training</button>
+              </form>
+              <form id="training-show-form" class="form-inline compact-top">
+                <input name="training_run_id" placeholder="training run id for detail" required />
+                <button class="button" type="submit">Show Training Detail</button>
+              </form>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel" data-panel="evaluation">
+          <div class="section-header">
+            <div>
+              <div class="eyebrow">Promotion</div>
+              <h2>Evaluation & KPI</h2>
+            </div>
+            <div class="inline-actions">
+              <button class="button" id="refresh-evaluations">Refresh Evaluations</button>
+              <button class="button" id="refresh-kpis">Refresh KPI</button>
+            </div>
+          </div>
+          <div class="grid two">
+            <div class="card">
+              <h3>Evaluations</h3>
+              <form id="evaluation-filter-form" class="form-inline compact compact-bottom">
+                <input name="domain" placeholder="domain" />
+                <input name="promotion_status" placeholder="promotion status" />
+                <button class="button" type="submit">Filter</button>
+              </form>
+              <div id="evaluation-table" class="table-wrap"></div>
+              <pre id="evaluation-output" class="output"></pre>
+              <form id="evaluation-form" class="stack compact-top">
+                <input name="training_run_id" placeholder="training run id" required />
+                <input name="frontier_baseline_name" placeholder="optional baseline override" />
+                <button class="button accent" type="submit">Run Evaluation</button>
+              </form>
+              <form id="evaluation-show-form" class="form-inline compact-top">
+                <input name="evaluation_run_id" placeholder="evaluation run id for detail" required />
+                <button class="button" type="submit">Show Evaluation Detail</button>
+              </form>
+            </div>
+            <div class="card">
+              <h3>KPI Report</h3>
+              <pre id="kpi-output" class="output tall"></pre>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel" data-panel="operations">
+          <div class="section-header">
+            <div>
+              <div class="eyebrow">Observability</div>
+              <h2>Operations Monitor</h2>
+            </div>
+            <div class="inline-actions">
+              <button class="button" id="refresh-ops-summary">Refresh Summary</button>
+              <button class="button" id="refresh-ops-live">Refresh Live Feed</button>
+            </div>
+          </div>
+          <div class="grid two">
+            <div class="card">
+              <h3>Operations Summary</h3>
+              <pre id="ops-summary-output" class="output medium"></pre>
+            </div>
+            <div class="card">
+              <h3>Runtime Metrics</h3>
+              <pre id="ops-metrics-output" class="output medium"></pre>
+            </div>
+          </div>
+          <div class="grid three">
+            <div class="card">
+              <h3>Recent Logs</h3>
+              <form id="ops-logs-filter-form" class="form-inline compact compact-bottom">
+                <input name="level" placeholder="level" />
+                <input name="component" placeholder="component" />
+                <input name="category" placeholder="category" />
+                <input name="limit" value="30" placeholder="30" />
+                <button class="button" type="submit">Filter</button>
+              </form>
+              <div id="ops-logs-table" class="table-wrap"></div>
+            </div>
+            <div class="card">
+              <h3>Recent Errors</h3>
+              <form id="ops-errors-filter-form" class="form-inline compact compact-bottom">
+                <input name="limit" value="20" placeholder="20" />
+                <button class="button" type="submit">Refresh</button>
+              </form>
+              <div id="ops-errors-table" class="table-wrap"></div>
+            </div>
+            <div class="card">
+              <h3>Audit Trail</h3>
+              <form id="ops-audit-filter-form" class="form-inline compact compact-bottom">
+                <input name="limit" value="20" placeholder="20" />
+                <button class="button" type="submit">Refresh</button>
+              </form>
+              <div id="ops-audit-table" class="table-wrap"></div>
+            </div>
+          </div>
+          <div class="grid two">
+            <div class="card">
+              <h3>Selected Record</h3>
+              <pre id="ops-detail-output" class="output tall"></pre>
+            </div>
+            <div class="card">
+              <h3>Live Feed Snapshot</h3>
+              <pre id="ops-live-output" class="output tall"></pre>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel" data-panel="ops">
+          <div class="section-header">
+            <div>
+              <div class="eyebrow">Runtime Control</div>
+              <h2>Jobs & Events</h2>
+            </div>
+            <div class="inline-actions">
+              <button class="button" id="refresh-jobs">Refresh Jobs</button>
+              <button class="button" id="refresh-events">Refresh Events</button>
+              <button class="button accent" id="run-worker-once">Run Worker Once</button>
+              <button class="button accent" id="run-scheduler-once">Run Scheduler Once</button>
+            </div>
+          </div>
+          <div class="grid two">
+            <div class="card">
+              <h3>Jobs</h3>
+              <form id="jobs-filter-form" class="form-inline compact compact-bottom">
+                <input name="status" placeholder="status" />
+                <input name="job_type" placeholder="job type" />
+                <input name="limit" placeholder="50" value="50" />
+                <button class="button" type="submit">Filter</button>
+              </form>
+              <div id="jobs-table" class="table-wrap"></div>
+            </div>
+            <div class="card">
+              <h3>Job Detail</h3>
+              <pre id="job-detail-output" class="output tall"></pre>
+            </div>
+          </div>
+          <div class="grid two">
+            <div class="card">
+              <h3>Events</h3>
+              <div class="inline-actions compact-bottom">
+                <button class="button" id="process-events">Process Pending Events</button>
+              </div>
+              <form id="events-filter-form" class="form-inline compact compact-bottom">
+                <input name="event_type" placeholder="event type" />
+                <select name="unprocessed">
+                  <option value="">all</option>
+                  <option value="true">unprocessed</option>
+                </select>
+                <input name="limit" placeholder="50" value="50" />
+                <button class="button" type="submit">Filter</button>
+              </form>
+              <div id="events-table" class="table-wrap"></div>
+            </div>
+            <div class="card">
+              <h3>Event Detail</h3>
+              <pre id="event-detail-output" class="output tall"></pre>
+            </div>
+          </div>
+        </section>
+
+        <section class="console">
+          <div class="section-header compact">
+            <div>
+              <div class="eyebrow">Result Stream</div>
+              <h2>Operator Console Log</h2>
+            </div>
+            <button class="button ghost" id="clear-console">Clear</button>
+          </div>
+          <pre id="console-output" class="output tall"></pre>
+        </section>
+      </main>
+    </div>
+
+    <script src="/admin/static/app.js"></script>
+  </body>
+  </html>
