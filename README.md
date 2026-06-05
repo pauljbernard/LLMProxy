@@ -27,6 +27,22 @@ The project is not trying to build a frontier foundation model or a full AI ecos
 
 ![llmProxy architecture](docs/assets/architecture-diagram.svg)
 
+## Documentation
+
+Published user and operator documentation is available in [docs/README.md](./docs/README.md).
+
+Recommended starting points:
+
+- [Product Overview](./docs/guides/product-overview.md)
+- [Quickstart](./docs/guides/quickstart.md)
+- [Operator Console](./docs/guides/operator-console.md)
+- [Admin CLI](./docs/guides/admin-cli.md)
+- [Operations Monitoring](./docs/guides/operations-monitoring.md)
+- [First Training Workflow](./docs/guides/first-training-workflow.md)
+- [Troubleshooting](./docs/guides/troubleshooting.md)
+- [Configuration Reference](./docs/reference/configuration.md)
+- [API Usage](./docs/reference/api-usage.md)
+
 ## Operator CLI
 
 `llmProxy` includes a utilitarian admin CLI for configuration inspection and day-to-day operations.
