@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     llmproxy_provider_timeout_seconds: float = 60.0
     llmproxy_training_backend_timeout_seconds: int = 14400
     llmproxy_evaluation_timeout_seconds: int = 3600
+    llmproxy_worker_include_job_types: str | None = None
+    llmproxy_worker_exclude_job_types: str | None = None
     llmproxy_default_route_model: str = "proxy-auto"
     llmproxy_bearer_token: str = "change-me"
     llmproxy_openai_api_key: str | None = None
@@ -50,6 +52,30 @@ class Settings(BaseSettings):
     llmproxy_lora_trainer_command: str | None = None
     llmproxy_qlora_trainer_command: str | None = None
     llmproxy_evaluation_command: str | None = None
+    llmproxy_frontier_baseline_names: dict[str, str] = Field(
+        default_factory=lambda: {
+            "coding": "claude-3-5-sonnet",
+            "software_architecture": "claude-3-5-sonnet",
+            "writing_style": "gpt-5.5",
+            "agent_systems": "gemini-2.5-pro",
+        }
+    )
+    llmproxy_frontier_baseline_scores: dict[str, float] = Field(
+        default_factory=lambda: {
+            "coding": 0.92,
+            "software_architecture": 0.91,
+            "writing_style": 0.88,
+            "agent_systems": 0.90,
+        }
+    )
+    llmproxy_frontier_baseline_costs: dict[str, float] = Field(
+        default_factory=lambda: {
+            "coding": 0.12,
+            "software_architecture": 0.14,
+            "writing_style": 0.10,
+            "agent_systems": 0.13,
+        }
+    )
     llmproxy_exports_path: str = "/data/exports"
     llmproxy_datasets_path: str = "/data/datasets"
     llmproxy_models_path: str = "/data/models"
@@ -81,6 +107,20 @@ class Settings(BaseSettings):
     @property
     def database_backend(self) -> str:
         return make_url(self.llmproxy_database_url).get_backend_name()
+
+    @staticmethod
+    def _parse_job_type_filter(value: str | None) -> set[str]:
+        if not value:
+            return set()
+        return {item.strip() for item in value.split(",") if item.strip()}
+
+    @property
+    def worker_include_job_types(self) -> set[str]:
+        return self._parse_job_type_filter(self.llmproxy_worker_include_job_types)
+
+    @property
+    def worker_exclude_job_types(self) -> set[str]:
+        return self._parse_job_type_filter(self.llmproxy_worker_exclude_job_types)
 
 
 @lru_cache(maxsize=1)

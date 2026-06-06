@@ -27,6 +27,49 @@ class FakeBedrockClient:
             )
         }
 
+    def invoke_model_with_response_stream(self, **kwargs):
+        assert kwargs["modelId"] == "anthropic.claude-3-5-sonnet"
+        payload = json.loads(kwargs["body"].decode("utf-8"))
+        assert payload["messages"][0]["content"] == "Design a service boundary."
+        return {
+            "body": [
+                {
+                    "chunk": {
+                        "bytes": json.dumps(
+                            {
+                                "type": "content_block_delta",
+                                "delta": {"type": "text_delta", "text": "Bedrock "},
+                                "model": "anthropic.claude-3-5-sonnet",
+                            }
+                        ).encode("utf-8")
+                    }
+                },
+                {
+                    "chunk": {
+                        "bytes": json.dumps(
+                            {
+                                "type": "content_block_delta",
+                                "delta": {"type": "text_delta", "text": "stream."},
+                                "model": "anthropic.claude-3-5-sonnet",
+                            }
+                        ).encode("utf-8")
+                    }
+                },
+                {
+                    "chunk": {
+                        "bytes": json.dumps(
+                            {
+                                "type": "message_delta",
+                                "delta": {"stop_reason": "end_turn"},
+                                "usage": {"input_tokens": 16, "output_tokens": 2},
+                                "model": "anthropic.claude-3-5-sonnet",
+                            }
+                        ).encode("utf-8")
+                    }
+                },
+            ]
+        }
+
 
 def _request() -> ChatCompletionRequest:
     return ChatCompletionRequest.model_validate(
@@ -62,3 +105,24 @@ def test_bedrock_provider_requires_runtime_credentials() -> None:
 
     with pytest.raises(ProviderConfigurationError):
         asyncio.run(provider.chat(_request()))
+
+
+def test_bedrock_provider_streams_chat_chunks() -> None:
+    provider = BedrockProvider(
+        "anthropic.claude-3-5-sonnet",
+        region="us-east-1",
+        access_key_id="test-access-key",
+        secret_access_key="test-secret-key",
+        client=FakeBedrockClient(),
+    )
+
+    chunks = asyncio.run(_collect(provider.stream_chat(_request())))
+
+    assert [chunk["delta"] for chunk in chunks if chunk["delta"]] == ["Bedrock ", "stream."]
+    assert chunks[-1]["finish_reason"] == "end_turn"
+    assert chunks[-1]["input_tokens"] == 16
+    assert chunks[-1]["output_tokens"] == 2
+
+
+async def _collect(stream) -> list[dict[str, object]]:
+    return [chunk async for chunk in stream]

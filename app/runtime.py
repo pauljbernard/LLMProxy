@@ -12,7 +12,7 @@ from app.config import get_settings
 from app.db.models import JobQueueRecord
 from app.db.session import get_engine, get_session_factory
 from app.integration.improvement import build_retraining_plan, record_teacher_comparison_sample
-from app.integration.jobs import claim_next_job, enqueue_kpi_report_job, mark_job_completed, mark_job_failed
+from app.integration.jobs import claim_next_job_for_lane, enqueue_kpi_report_job, mark_job_completed, mark_job_failed
 from app.integration.outbox import process_pending_events
 from app.integration.performance import generate_kpi_report
 from app.datasets.ingestion import import_dataset
@@ -51,11 +51,18 @@ def run_api() -> None:
     )
 
 
-def run_worker() -> None:
+def run_worker(
+    *,
+    include_job_types: set[str] | None = None,
+    exclude_job_types: set[str] | None = None,
+) -> None:
     settings = get_settings()
     wait_for_database(settings.llmproxy_database_wait_timeout_seconds)
     while True:  # pragma: no cover - long-lived runtime role
-        processed = run_worker_iteration()
+        processed = run_worker_iteration(
+            include_job_types=include_job_types or settings.worker_include_job_types,
+            exclude_job_types=exclude_job_types or settings.worker_exclude_job_types,
+        )
         if not processed:
             time.sleep(5)
 
@@ -87,12 +94,20 @@ def run_scheduler_iteration() -> None:
         session.close()
 
 
-def run_worker_iteration() -> bool:
+def run_worker_iteration(
+    *,
+    include_job_types: set[str] | None = None,
+    exclude_job_types: set[str] | None = None,
+) -> bool:
     settings = get_settings()
     session = get_session_factory()()
     job: JobQueueRecord | None = None
     try:
-        job = claim_next_job(session)
+        job = claim_next_job_for_lane(
+            session,
+            include_job_types=include_job_types or settings.worker_include_job_types,
+            exclude_job_types=exclude_job_types or settings.worker_exclude_job_types,
+        )
         if job is None:
             session.commit()
             return False
@@ -166,7 +181,7 @@ def run_worker_iteration() -> bool:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="llmProxy runtime entrypoints")
-    parser.add_argument("role", choices=["api", "worker", "scheduler", "migrate"])
+    parser.add_argument("role", choices=["api", "worker", "training-worker", "scheduler", "migrate"])
     return parser.parse_args()
 
 
@@ -177,6 +192,9 @@ def main() -> None:
         return
     if args.role == "worker":
         run_worker()
+        return
+    if args.role == "training-worker":
+        run_worker(include_job_types={"training.run"})
         return
     if args.role == "scheduler":
         run_scheduler()

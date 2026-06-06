@@ -95,6 +95,7 @@
                   <input name="temperature" value="0.2" />
                   <input name="max_tokens" value="1024" />
                 </div>
+                <label class="checkbox-row"><input name="stream" type="checkbox" /> Stream response</label>
                 <textarea name="messages" rows="8" placeholder="user:Review this patch.&#10;assistant:Previous context..."></textarea>
                 <div class="inline-actions">
                   <button class="button accent" type="submit" data-mode="chat">Run Chat</button>
@@ -126,6 +127,19 @@
                 <button class="button" type="submit">Filter</button>
               </form>
               <div id="requests-table" class="table-wrap"></div>
+            </div>
+            <div class="card">
+              <div class="card-header">
+                <h3>Streaming Support</h3>
+                <button class="button" id="refresh-streaming-support">Refresh</button>
+              </div>
+              <div id="streaming-support-table" class="table-wrap compact-bottom"></div>
+              <pre id="streaming-support-output" class="output medium"></pre>
+              <form id="streaming-validate-form" class="form-inline compact-top">
+                <input name="provider_key" placeholder="provider key (optional)" />
+                <input name="prompt" placeholder="validation prompt" value="Say hello briefly." />
+                <button class="button accent" type="submit">Validate Frontier Stream</button>
+              </form>
             </div>
             <div class="card">
               <h3>Request Detail</h3>
@@ -322,6 +336,16 @@
             <div class="card">
               <h3>Runtime Metrics</h3>
               <pre id="ops-metrics-output" class="output medium"></pre>
+            </div>
+          </div>
+          <div class="grid two">
+            <div class="card">
+              <h3>Streaming Telemetry</h3>
+              <pre id="ops-stream-output" class="output medium"></pre>
+            </div>
+            <div class="card">
+              <h3>Stream Summaries</h3>
+              <pre id="ops-stream-live-output" class="output medium"></pre>
             </div>
           </div>
           <div class="grid three">

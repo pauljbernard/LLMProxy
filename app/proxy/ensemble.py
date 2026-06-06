@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
+from time import perf_counter
 
 from app.config import Settings
 from app.proxy.candidates import capture_training_candidate
 from app.proxy.judge import judge_response
 from app.proxy.recorder import record_judge_critique, record_model_response
 from app.registry.model_registry import get_provider_registry
+from app.services.observability import log_record
 from app.schemas.chat import ChatCompletionRequest, ChatCompletionResponse
 from app.schemas.ensemble import EnsembleResponse, TeacherCandidate
 from app.schemas.routing import FallbackTarget, RankedAlternative
@@ -25,9 +27,55 @@ async def run_teacher_ensemble(
 ) -> EnsembleResponse:
     provider_registry = get_provider_registry(settings)
     teacher_keys = ["anthropic", "openai", "google"]
-    results = await asyncio.gather(
-        *(provider_registry[key].invoke(request) for key in teacher_keys)
-    )
+
+    async def _teacher_result(provider_key: str) -> dict[str, object]:
+        provider = provider_registry[provider_key]
+        if request.stream and getattr(provider, "supports_streaming", False):
+            aggregated_content = ""
+            prompt_tokens = 0
+            completion_tokens = 0
+            finish_reason = "stop"
+            chunk_count = 0
+            started_at = perf_counter()
+            log_record(
+                settings,
+                level="INFO",
+                component="proxy.ensemble",
+                category="stream",
+                message="Teacher stream started",
+                data={"request_id": request_log_id, "provider": provider_key, "model": provider.model_id},
+            )
+            async for chunk in provider.stream_chat(request):
+                chunk_count += 1
+                aggregated_content += str(chunk.get("delta", ""))
+                prompt_tokens = max(prompt_tokens, int(chunk.get("input_tokens", 0)))
+                completion_tokens = max(completion_tokens, int(chunk.get("output_tokens", 0)))
+                if chunk.get("finish_reason"):
+                    finish_reason = str(chunk["finish_reason"])
+            result = {
+                "model": provider.model_id,
+                "content": aggregated_content,
+                "input_tokens": prompt_tokens,
+                "output_tokens": completion_tokens or len(aggregated_content.split()),
+                "latency_ms": int((perf_counter() - started_at) * 1000),
+                "finish_reason": finish_reason,
+                "cost_estimate": round((prompt_tokens + completion_tokens) * getattr(provider, "price_per_token", 0.0), 6),
+                "raw_response": {"streamed": True, "chunk_count": chunk_count, "ensemble": True},
+                "provider": provider.provider_name,
+                "provider_family": provider.provider_family,
+            }
+            log_record(
+                settings,
+                level="INFO",
+                component="proxy.ensemble",
+                category="stream",
+                message="Teacher stream completed",
+                data={"request_id": request_log_id, "provider": provider_key, "model": provider.model_id, "chunk_count": chunk_count},
+            )
+            return result
+        return await provider.invoke(request)
+
+    results = await asyncio.gather(*(_teacher_result(key) for key in teacher_keys))
 
     teacher_candidates: list[TeacherCandidate] = []
 

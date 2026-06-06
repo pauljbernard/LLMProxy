@@ -263,6 +263,63 @@ def test_chat_completions_routes_architecture_to_anthropic(monkeypatch) -> None:
     assert payload["choices"][0]["message"]["content"] == "Anthropic architecture answer."
 
 
+def test_chat_completions_streams_ollama_sse_and_persists(monkeypatch) -> None:
+    from app.api import openai_compatible
+    from app.api.dependencies import get_async_session
+
+    ollama = OllamaProvider(
+        "qwen2.5-coder:14b",
+        base_url="http://localhost:11434",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                text=(
+                    '{"model":"qwen2.5-coder:14b","message":{"role":"assistant","content":"Ollama "},"done":false}\n'
+                    '{"model":"qwen2.5-coder:14b","message":{"role":"assistant","content":"coding answer."},"done":true,"done_reason":"stop","prompt_eval_count":14,"eval_count":2}\n'
+                ),
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        openai_compatible,
+        "get_provider_registry",
+        lambda settings, session=None: {
+            "ollama": ollama,
+            "openai": OpenAIProvider("gpt-5.5", api_key="unused"),
+        },
+    )
+    fake_session = FakeSession()
+    fake_async_session = FakeAsyncSession(fake_session)
+    app.dependency_overrides[get_async_session] = lambda: fake_async_session
+    client = TestClient(app)
+    with client.stream(
+        "POST",
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer change-me"},
+        json={
+            "model": "proxy-auto",
+            "stream": True,
+            "messages": [{"role": "user", "content": "Review this coding patch."}],
+            "metadata": {
+                "session_id": "sess_stream",
+                "domain_hint": "coding",
+                "task_type_hint": "code_review",
+            },
+        },
+    ) as response:
+        payload = response.read().decode("utf-8")
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert 'data: {"id":' in payload
+    assert '"object": "chat.completion.chunk"' in payload
+    assert '"content": "Ollama "' in payload
+    assert '"content": "coding answer."' in payload
+    assert "data: [DONE]" in payload
+    assert fake_session.committed is True
+    assert len(fake_session.items) == 5
+
+
 def test_chat_completions_routes_research_to_google(monkeypatch) -> None:
     from app.api import openai_compatible
     from app.api.dependencies import get_async_session

@@ -76,3 +76,33 @@ def test_ollama_provider_batches_embeddings_in_one_request() -> None:
     result = asyncio.run(provider.embed(["hello world", "goodbye world"]))
 
     assert result == [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]
+
+
+def test_ollama_provider_streams_chat_chunks() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode("utf-8"))
+        assert payload["stream"] is True
+        return httpx.Response(
+            200,
+            text=(
+                '{"model":"qwen2.5-coder:14b","message":{"role":"assistant","content":"Ollama "},"done":false}\n'
+                '{"model":"qwen2.5-coder:14b","message":{"role":"assistant","content":"answer."},"done":true,"done_reason":"stop","prompt_eval_count":14,"eval_count":2}\n'
+            ),
+        )
+
+    provider = OllamaProvider(
+        "qwen2.5-coder:14b",
+        base_url="http://localhost:11434",
+        transport=httpx.MockTransport(handler),
+    )
+
+    chunks = asyncio.run(_collect(provider.stream_chat(_request())))
+
+    assert [chunk["delta"] for chunk in chunks] == ["Ollama ", "answer."]
+    assert chunks[-1]["finish_reason"] == "stop"
+    assert chunks[-1]["input_tokens"] == 14
+    assert chunks[-1]["output_tokens"] == 2
+
+
+async def _collect(stream) -> list[dict[str, object]]:
+    return [chunk async for chunk in stream]

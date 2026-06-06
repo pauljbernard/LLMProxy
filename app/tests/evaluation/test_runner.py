@@ -100,6 +100,38 @@ def test_run_evaluation_uses_configured_backend(monkeypatch, tmp_path: Path) -> 
     assert len(session.added) >= 2
 
 
+def test_run_evaluation_uses_configured_frontier_baselines(monkeypatch, tmp_path: Path) -> None:
+    from app.evaluation import runner as evaluation_runner
+
+    session = FakeSession(build_training_run(), build_dataset_version())
+    settings = Settings(
+        llmproxy_models_path=str(tmp_path),
+        llmproxy_evaluation_command="fake-evaluator",
+        llmproxy_frontier_baseline_names={"coding": "gpt-5.5"},
+        llmproxy_frontier_baseline_scores={"coding": 0.97},
+        llmproxy_frontier_baseline_costs={"coding": 0.2},
+    )
+
+    monkeypatch.setattr(
+        evaluation_runner,
+        "run_json_command",
+        lambda **kwargs: {
+            "overall_score": 0.91,
+            "package_metadata": {},
+        },
+    )
+
+    result = run_evaluation(
+        session,
+        request=EvaluationRunRequest(training_run_id="train_1"),
+        settings=settings,
+    )
+
+    assert result.frontier_baseline_name == "gpt-5.5"
+    assert result.result["frontier_baseline_score"] == 0.97
+    assert result.result["frontier_baseline_cost"] == 0.2
+
+
 def test_run_evaluation_rejects_missing_training_run(tmp_path: Path) -> None:
     session = FakeSession(build_training_run(), build_dataset_version())
     settings = Settings(llmproxy_models_path=str(tmp_path))

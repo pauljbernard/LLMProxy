@@ -102,6 +102,52 @@ def tail_log_records(
     return records[-limit:]
 
 
+def build_streaming_telemetry(settings: Settings, *, limit: int = 500) -> dict[str, Any]:
+    records = tail_log_records(settings, limit=limit, category="stream")
+    stream_started = 0
+    stream_completed = 0
+    stream_failed = 0
+    chunk_counts_by_provider: dict[str, int] = {}
+    summaries: list[dict[str, Any]] = []
+
+    for record in records:
+        message = str(record.get("message", ""))
+        data = record.get("data") or {}
+        provider = str(data.get("provider") or data.get("provider_key") or "unknown")
+        chunk_count = int(data.get("chunk_count") or 0)
+
+        if "started" in message.lower():
+            stream_started += 1
+        if "completed" in message.lower():
+            stream_completed += 1
+            chunk_counts_by_provider[provider] = chunk_counts_by_provider.get(provider, 0) + chunk_count
+        if "failed" in message.lower():
+            stream_failed += 1
+
+        if str(record.get("component")) in {"proxy.shadow", "proxy.ensemble", "admin.streaming"}:
+            summaries.append(
+                {
+                    "timestamp": record.get("timestamp"),
+                    "component": record.get("component"),
+                    "message": message,
+                    "provider": provider,
+                    "model": data.get("model"),
+                    "chunk_count": chunk_count or None,
+                    "success": data.get("success"),
+                    "error": data.get("error"),
+                    "request_id": data.get("request_id"),
+                }
+            )
+
+    return {
+        "stream_start_count": stream_started,
+        "stream_complete_count": stream_completed,
+        "stream_failed_count": stream_failed,
+        "chunk_counts_by_provider": chunk_counts_by_provider,
+        "recent_stream_summaries": summaries[-20:],
+    }
+
+
 def build_operations_summary(session: Session, *, settings: Settings) -> dict[str, Any]:
     requests = list(session.execute(select(RequestLog).order_by(RequestLog.created_at.desc()).limit(100)).scalars())
     jobs = list(session.execute(select(JobQueueRecord).order_by(JobQueueRecord.created_at.desc()).limit(200)).scalars())
@@ -131,6 +177,7 @@ def build_operations_summary(session: Session, *, settings: Settings) -> dict[st
     }
     latest_request = requests[0].id if requests else None
     latest_evaluation = evaluations[0].id if evaluations else None
+    streaming = build_streaming_telemetry(settings)
 
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -143,6 +190,7 @@ def build_operations_summary(session: Session, *, settings: Settings) -> dict[st
         "recent_audit_count": len(audit_logs),
         "latest_request_id": latest_request,
         "latest_evaluation_run_id": latest_evaluation,
+        "streaming": streaming,
         "provider_configuration": {
             "openai": bool(settings.llmproxy_openai_api_key),
             "anthropic": bool(settings.llmproxy_anthropic_api_key),

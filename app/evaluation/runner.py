@@ -19,39 +19,22 @@ from app.registry.artifact_store import store_artifact
 from app.services.command_backend import run_json_command
 from app.schemas.evaluation import EvaluationResult, EvaluationRunRequest
 
-BASELINE_BY_DOMAIN = {
-    "coding": "claude-3-5-sonnet",
-    "software_architecture": "claude-3-5-sonnet",
-    "writing_style": "gpt-5.5",
-    "agent_systems": "gemini-2.5-pro",
-}
-
-FRONTIER_BASELINE_SCORE_BY_DOMAIN = {
-    "coding": 0.92,
-    "software_architecture": 0.91,
-    "writing_style": 0.88,
-    "agent_systems": 0.90,
-}
-
-FRONTIER_BASELINE_COST_BY_DOMAIN = {
-    "coding": 0.12,
-    "software_architecture": 0.14,
-    "writing_style": 0.10,
-    "agent_systems": 0.13,
-}
-
 LOCAL_RUNTIME_COST_BY_MODE = {
     "lora": 0.02,
     "qlora": 0.025,
 }
 
 
-def frontier_baseline_score(domain: str) -> float:
-    return FRONTIER_BASELINE_SCORE_BY_DOMAIN.get(domain, 0.90)
+def frontier_baseline_score(domain: str, settings: Settings) -> float:
+    return float(settings.llmproxy_frontier_baseline_scores.get(domain, 0.90))
 
 
-def frontier_baseline_cost(domain: str) -> float:
-    return FRONTIER_BASELINE_COST_BY_DOMAIN.get(domain, 0.12)
+def frontier_baseline_cost(domain: str, settings: Settings) -> float:
+    return float(settings.llmproxy_frontier_baseline_costs.get(domain, 0.12))
+
+
+def frontier_baseline_name_for_domain(domain: str, settings: Settings) -> str:
+    return settings.llmproxy_frontier_baseline_names.get(domain, settings.llmproxy_anthropic_model)
 
 
 def list_evaluation_runs(session: Session) -> list[EvaluationRun]:
@@ -80,12 +63,12 @@ def run_evaluation(
     benchmark_manifest = benchmark_bundle["manifest"]
     benchmark_records = benchmark_bundle["records"]
 
-    baseline_name = request.frontier_baseline_name or BASELINE_BY_DOMAIN.get(
+    baseline_name = request.frontier_baseline_name or frontier_baseline_name_for_domain(
         dataset_version.domain,
-        settings.llmproxy_anthropic_model,
+        settings,
     )
-    frontier_score = frontier_baseline_score(dataset_version.domain)
-    frontier_cost = frontier_baseline_cost(dataset_version.domain)
+    frontier_score = frontier_baseline_score(dataset_version.domain, settings)
+    frontier_cost = frontier_baseline_cost(dataset_version.domain, settings)
     local_cost = LOCAL_RUNTIME_COST_BY_MODE.get(training_run.training_mode, 0.03)
     evaluation_backend_result = run_json_command(
         command=settings.llmproxy_evaluation_command,

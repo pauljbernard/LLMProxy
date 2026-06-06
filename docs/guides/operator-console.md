@@ -30,10 +30,23 @@ Use this panel to:
 Use this panel to:
 
 - run chat requests
+- run streamed chat requests when the resolved provider supports streaming
 - run ensemble requests
 - run embeddings
 - inspect request history
 - inspect full request detail including routing, model responses, candidates, and performance samples
+
+Current streaming-capable providers:
+
+- `openai`
+- `ollama`
+- `anthropic`
+- `google`
+- `azure_openai`
+- `xai`
+- `bedrock`
+
+If a request resolves to a provider without streaming support, the proxy returns a clear `501` instead of silently buffering or downgrading the request.
 
 ### Models & Deployment
 

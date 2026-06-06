@@ -45,6 +45,46 @@ async function apiFetch(url, options = {}) {
   return payload;
 }
 
+async function apiStream(url, body) {
+  const headers = new Headers({ "Content-Type": "application/json" });
+  if (state.token) {
+    headers.set("Authorization", `Bearer ${state.token}`);
+  }
+  const response = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  if (!response.body) {
+    throw new Error("Streaming response body unavailable.");
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const events = [];
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const segments = buffer.split("\n\n");
+    buffer = segments.pop() || "";
+    for (const segment of segments) {
+      const dataLine = segment.split("\n").find((line) => line.startsWith("data: "));
+      if (!dataLine) continue;
+      const raw = dataLine.slice(6).trim();
+      if (raw === "[DONE]") {
+        events.push({ done: true });
+        continue;
+      }
+      try {
+        events.push(JSON.parse(raw));
+      } catch {
+        events.push({ raw });
+      }
+    }
+  }
+  return events;
+}
+
 function renderOutput(selector, payload) {
   $(selector).textContent = JSON.stringify(payload, null, 2);
 }
@@ -175,6 +215,27 @@ async function refreshRequests(filters = {}) {
       return tr;
     }),
   );
+}
+
+async function refreshStreamingSupport() {
+  const payload = await apiFetch("/admin/api/proxy/streaming-support");
+  const host = $("#streaming-support-table");
+  host.innerHTML = "";
+  host.appendChild(
+    makeTable(["Provider", "Model", "Configured", "Streaming", "Family"], payload.providers, (row) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td><strong>${row.provider_name}</strong></td>
+        <td>${row.model_id}</td>
+        <td>${row.configured ? "yes" : "no"}</td>
+        <td>${row.supports_streaming ? "yes" : "no"}</td>
+        <td>${row.provider_family}</td>
+      `;
+      return tr;
+    }),
+  );
+  renderOutput("#streaming-support-output", payload);
+  return payload;
 }
 
 async function refreshModels() {
@@ -434,8 +495,12 @@ function renderLogTable(selector, rows) {
 }
 
 async function refreshOperationsSummary() {
-  renderOutput("#ops-summary-output", await apiFetch("/admin/api/ops/summary"));
-  renderOutput("#ops-metrics-output", await apiFetch("/metrics"));
+  const summary = await apiFetch("/admin/api/ops/summary");
+  const metrics = await apiFetch("/metrics");
+  renderOutput("#ops-summary-output", summary);
+  renderOutput("#ops-metrics-output", metrics);
+  renderOutput("#ops-stream-output", summary.streaming || {});
+  renderOutput("#ops-stream-live-output", (summary.streaming && summary.streaming.recent_stream_summaries) || []);
 }
 
 async function refreshOperationsLogs() {
@@ -460,6 +525,8 @@ async function refreshOperationsLive() {
   const payload = await apiFetch("/admin/api/ops/live");
   renderOutput("#ops-live-output", payload);
   renderOutput("#ops-summary-output", payload.summary);
+  renderOutput("#ops-stream-output", payload.summary?.streaming || {});
+  renderOutput("#ops-stream-live-output", (payload.summary?.streaming && payload.summary.streaming.recent_stream_summaries) || []);
   renderLogTable("#ops-logs-table", payload.logs);
   renderLogTable("#ops-errors-table", payload.errors);
   renderLogTable("#ops-audit-table", payload.audit);
@@ -607,8 +674,10 @@ async function initialize() {
     event.preventDefault();
     const submitter = event.submitter;
     const data = new FormData(event.currentTarget);
+    const wantsStream = data.get("stream") === "on";
     const body = {
       model: data.get("model"),
+      stream: wantsStream,
       temperature: Number(data.get("temperature")),
       max_tokens: Number(data.get("max_tokens")),
       metadata: {
@@ -619,7 +688,10 @@ async function initialize() {
       messages: parseMessages(String(data.get("messages") || "")),
     };
     const url = submitter.dataset.mode === "ensemble" ? "/proxy/ensemble" : "/v1/chat/completions";
-    const result = await apiFetch(url, { method: "POST", body: JSON.stringify(body) });
+    const result =
+      wantsStream && submitter.dataset.mode === "chat"
+        ? await apiStream(url, body)
+        : await apiFetch(url, { method: "POST", body: JSON.stringify(body) });
     renderOutput("#chat-output", result);
     logConsole(`proxy ${submitter.dataset.mode}`, result);
     await refreshRequests();
@@ -642,6 +714,20 @@ async function initialize() {
     await refreshRequests(Object.fromEntries(data.entries()));
   });
   $("#refresh-requests").addEventListener("click", () => refreshRequests().catch((error) => logConsole("requests refresh failed", String(error))));
+  $("#refresh-streaming-support").addEventListener("click", () => refreshStreamingSupport().catch((error) => logConsole("streaming support refresh failed", String(error))));
+  $("#streaming-validate-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const result = await apiFetch("/admin/api/ops/streaming/validate", {
+      method: "POST",
+      body: JSON.stringify({
+        provider_key: data.get("provider_key") || null,
+        prompt: data.get("prompt") || "Say hello briefly.",
+      }),
+    });
+    renderOutput("#streaming-support-output", result);
+    logConsole("streaming validation", result);
+  });
 
   $("#refresh-models").addEventListener("click", () => refreshModels().catch((error) => logConsole("models refresh failed", String(error))));
   $("#refresh-local-models").addEventListener("click", () => refreshLocalModels().catch((error) => logConsole("local models refresh failed", String(error))));
@@ -828,6 +914,7 @@ async function initialize() {
       await refreshHealth();
       await refreshConfig();
       await refreshRequests();
+      await refreshStreamingSupport();
       await refreshModels();
       await refreshLocalModels();
       await refreshPolicies();

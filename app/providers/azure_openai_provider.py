@@ -1,6 +1,7 @@
 """Azure OpenAI provider implementation."""
 
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
+import json
 
 from app.config import Settings
 from app.providers.base import BaseProvider
@@ -11,6 +12,7 @@ class AzureOpenAIProvider(BaseProvider):
     provider_family = "Azure OpenAI"
     provider_name = "azure_openai"
     price_per_token = 0.000021
+    supports_streaming = True
 
     def __init__(
         self,
@@ -87,3 +89,44 @@ class AzureOpenAIProvider(BaseProvider):
             "cost_estimate": cost_estimate,
             "raw_response": raw_response,
         }
+
+    async def stream_chat(self, request: ChatCompletionRequest) -> AsyncIterator[dict[str, object]]:
+        api_key = self._require_config(self.api_key, field_name="llmproxy_azure_openai_api_key")
+        endpoint = self._require_config(self.endpoint, field_name="llmproxy_azure_openai_endpoint")
+        payload = {
+            "messages": self._request_messages(request.messages),
+            "temperature": request.temperature,
+            "max_tokens": request.max_tokens,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        }
+        headers = {
+            "api-key": api_key,
+            "Content-Type": "application/json",
+        }
+        async with self._client(base_url=endpoint, headers=headers) as client:
+            async with client.stream(
+                "POST",
+                f"/openai/deployments/{self.model_id}/chat/completions",
+                params={"api-version": self.api_version},
+                json=payload,
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line or not line.startswith("data: "):
+                        continue
+                    payload_text = line[6:].strip()
+                    if payload_text == "[DONE]":
+                        break
+                    raw_chunk = json.loads(payload_text)
+                    choice = (raw_chunk.get("choices") or [{}])[0]
+                    delta = choice.get("delta") or {}
+                    usage = raw_chunk.get("usage") or {}
+                    yield {
+                        "model": str(raw_chunk.get("model", self.model_id)),
+                        "delta": str(delta.get("content", "")),
+                        "finish_reason": choice.get("finish_reason"),
+                        "input_tokens": int(usage.get("prompt_tokens", 0)),
+                        "output_tokens": int(usage.get("completion_tokens", 0)),
+                        "raw_chunk": raw_chunk,
+                    }

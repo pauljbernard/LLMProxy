@@ -9,6 +9,12 @@ def test_parse_args_accepts_api_role() -> None:
     assert args.role == "api"
 
 
+def test_parse_args_accepts_training_worker_role() -> None:
+    with patch("sys.argv", ["runtime", "training-worker"]):
+        args = parse_args()
+    assert args.role == "training-worker"
+
+
 def test_run_migrations_invokes_alembic() -> None:
     with patch("subprocess.run") as run:
         run_migrations()
@@ -71,3 +77,24 @@ def test_run_worker_iteration_supports_additional_job_types() -> None:
 
     with patch("app.runtime.get_session_factory", return_value=lambda: fake_session):
         assert run_worker_iteration() is True
+
+
+def test_run_worker_iteration_passes_job_lane_filters() -> None:
+    fake_session = type(
+        "FakeSession",
+        (),
+        {
+            "commit": lambda self: None,
+            "close": lambda self: None,
+            "rollback": lambda self: None,
+            "get": lambda self, model, job_id: None,
+        },
+    )()
+
+    with patch("app.runtime.get_session_factory", return_value=lambda: fake_session):
+        with patch("app.runtime.claim_next_job_for_lane", return_value=None) as claim:
+            assert run_worker_iteration(include_job_types={"training.run"}, exclude_job_types={"kpi.generate"}) is False
+    claim.assert_called_once()
+    _, kwargs = claim.call_args
+    assert kwargs["include_job_types"] == {"training.run"}
+    assert kwargs["exclude_job_types"] == {"kpi.generate"}

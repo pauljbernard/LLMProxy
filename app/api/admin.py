@@ -34,8 +34,12 @@ from app.operator_payloads import (
     settings_payload,
     training_run_payload,
 )
+from app.proxy.classifier import classify_request
+from app.proxy.router import select_route
+from app.registry.model_registry import get_provider_registry, list_provider_capabilities
 from app.runtime import run_scheduler_iteration, run_worker_iteration
 from app.services.observability import build_operations_summary, log_record, tail_log_records
+from app.schemas.chat import ChatCompletionRequest
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -52,6 +56,15 @@ class JobRetryRequest(BaseModel):
     reset_attempts: bool = False
     available_now: bool = False
 
+
+class StreamingValidationRequest(BaseModel):
+    provider_key: str | None = None
+    prompt: str = "Say hello briefly."
+    requested_model: str = "proxy-auto"
+    domain_hint: str = "general"
+    task_type_hint: str = "analysis"
+    max_chunks: int = 12
+
 def _write_env_value(env_file: Path, key: str, value: str) -> None:
     lines: list[str] = []
     if env_file.exists():
@@ -64,6 +77,43 @@ def _write_env_value(env_file: Path, key: str, value: str) -> None:
     else:
         lines.append(rendered)
     env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _streaming_route_examples(session: Session, settings: Settings) -> list[dict[str, Any]]:
+    scenarios = [
+        {"requested_model": "proxy-local", "domain_hint": "coding", "task_type_hint": "analysis"},
+        {"requested_model": "proxy-auto", "domain_hint": "coding", "task_type_hint": "code_review"},
+        {"requested_model": "proxy-auto", "domain_hint": "software_architecture", "task_type_hint": "design_review"},
+        {"requested_model": "proxy-auto", "domain_hint": "research", "task_type_hint": "analysis"},
+        {"requested_model": "proxy-auto", "domain_hint": "general", "task_type_hint": "analysis"},
+    ]
+    provider_registry = get_provider_registry(settings, session=session)
+    rows: list[dict[str, Any]] = []
+    for scenario in scenarios:
+        request = ChatCompletionRequest.model_validate(
+            {
+                "model": scenario["requested_model"],
+                "messages": [{"role": "user", "content": "streaming validation example"}],
+                "metadata": {
+                    "session_id": "admin_streaming_support",
+                    "domain_hint": scenario["domain_hint"],
+                    "task_type_hint": scenario["task_type_hint"],
+                },
+            }
+        )
+        classification = classify_request(request)
+        route = select_route("req_admin_streaming_support", request, classification, settings, session=session)
+        provider = provider_registry.get(route.provider_key)
+        rows.append(
+            {
+                **scenario,
+                "selected_provider": route.provider_key,
+                "selected_model": route.decision.selected_model,
+                "selected_mode": route.decision.selected_mode,
+                "supports_streaming": bool(getattr(provider, "supports_streaming", False)),
+            }
+        )
+    return rows
 
 @router.get("")
 def admin_console() -> FileResponse:
@@ -80,6 +130,21 @@ def get_config(
     settings: Settings = Depends(get_runtime_settings),
 ) -> dict[str, Any]:
     return settings_payload(settings)
+
+
+@router.get("/api/proxy/streaming-support", dependencies=[Depends(require_api_token)])
+def get_streaming_support(
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_runtime_settings),
+) -> dict[str, Any]:
+    capabilities = [item.model_dump(mode="json") for item in list_provider_capabilities(settings, session=session)]
+    provider_configuration = settings_payload(settings)["provider_configuration"]
+    for item in capabilities:
+        item["configured"] = bool(provider_configuration.get(item["provider_name"], False))
+    return {
+        "providers": capabilities,
+        "route_examples": _streaming_route_examples(session, settings),
+    }
 
 
 @router.get("/api/config/validate", dependencies=[Depends(require_api_token)])
@@ -167,6 +232,105 @@ def get_operations_live(
         "errors": tail_log_records(settings, limit=20, errors_only=True),
         "audit": tail_log_records(settings, limit=20, audit_only=True),
     }
+
+
+@router.post("/api/ops/streaming/validate", dependencies=[Depends(require_operator_token)])
+async def validate_streaming_provider(
+    request: StreamingValidationRequest,
+    settings: Settings = Depends(get_runtime_settings),
+    session: Session = Depends(get_session),
+    principal: AuthPrincipal = Depends(require_operator_token),
+) -> dict[str, Any]:
+    provider_registry = get_provider_registry(settings, session=session)
+    provider_order = (
+        [request.provider_key] if request.provider_key else ["openai", "anthropic", "google", "xai", "azure_openai", "bedrock"]
+    )
+    selected_key = None
+    selected_provider = None
+    for provider_key in provider_order:
+        provider = provider_registry.get(provider_key)
+        if provider is None or not getattr(provider, "supports_streaming", False):
+            continue
+        if request.provider_key:
+            selected_key = provider_key
+            selected_provider = provider
+            break
+        configured = settings_payload(settings)["provider_configuration"].get(provider_key, False)
+        if configured:
+            selected_key = provider_key
+            selected_provider = provider
+            break
+    if selected_provider is None or selected_key is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No configured streaming frontier provider is available.")
+
+    chat_request = ChatCompletionRequest.model_validate(
+        {
+            "model": request.requested_model if request.requested_model != "proxy-auto" else getattr(selected_provider, "model_id", "proxy-auto"),
+            "stream": True,
+            "messages": [{"role": "user", "content": request.prompt}],
+            "metadata": {
+                "session_id": "admin_stream_validation",
+                "domain_hint": request.domain_hint,
+                "task_type_hint": request.task_type_hint,
+            },
+        }
+    )
+    chunks: list[str] = []
+    finish_reason = None
+    input_tokens = 0
+    output_tokens = 0
+    try:
+        async for chunk in selected_provider.stream_chat(chat_request):
+            text_delta = str(chunk.get("delta", ""))
+            if text_delta and len(chunks) < request.max_chunks:
+                chunks.append(text_delta)
+            input_tokens = max(input_tokens, int(chunk.get("input_tokens", 0)))
+            output_tokens = max(output_tokens, int(chunk.get("output_tokens", 0)))
+            if chunk.get("finish_reason"):
+                finish_reason = str(chunk["finish_reason"])
+            if len(chunks) >= request.max_chunks and finish_reason:
+                break
+        result = {
+            "success": True,
+            "provider_key": selected_key,
+            "provider_family": getattr(selected_provider, "provider_family", selected_key),
+            "model": getattr(selected_provider, "model_id", None),
+            "chunk_preview": chunks,
+            "preview_text": "".join(chunks),
+            "finish_reason": finish_reason,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "validated_by": principal.role,
+        }
+        log_record(
+            settings,
+            level="INFO",
+            component="admin.streaming",
+            category="audit",
+            message="Streaming provider validation executed",
+            data=result,
+            audit=True,
+        )
+        return result
+    except Exception as exc:
+        result = {
+            "success": False,
+            "provider_key": selected_key,
+            "provider_family": getattr(selected_provider, "provider_family", selected_key),
+            "model": getattr(selected_provider, "model_id", None),
+            "error": str(exc),
+            "validated_by": principal.role,
+        }
+        log_record(
+            settings,
+            level="ERROR",
+            component="admin.streaming",
+            category="error",
+            message="Streaming provider validation failed",
+            data=result,
+            audit=True,
+        )
+        return result
 
 
 @router.get("/api/proxy/requests", dependencies=[Depends(require_api_token)])

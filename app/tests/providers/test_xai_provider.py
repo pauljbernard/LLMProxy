@@ -62,3 +62,35 @@ def test_xai_provider_requires_api_key() -> None:
 
     with pytest.raises(ProviderConfigurationError):
         asyncio.run(provider.chat(_request()))
+
+
+def test_xai_provider_streams_chat_chunks() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode("utf-8"))
+        assert payload["stream"] is True
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"id":"chatcmpl_xai","model":"grok-3-mini","choices":[{"delta":{"content":"xAI "},"finish_reason":null}]}\n\n'
+                'data: {"id":"chatcmpl_xai","model":"grok-3-mini","choices":[{"delta":{"content":"stream."},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":2}}\n\n'
+                "data: [DONE]\n\n"
+            ),
+        )
+
+    provider = XAIProvider(
+        "grok-3-mini",
+        api_key="test-xai-key",
+        base_url="https://api.x.ai/v1",
+        transport=httpx.MockTransport(handler),
+    )
+
+    chunks = asyncio.run(_collect(provider.stream_chat(_request())))
+
+    assert [chunk["delta"] for chunk in chunks] == ["xAI ", "stream."]
+    assert chunks[-1]["finish_reason"] == "stop"
+    assert chunks[-1]["input_tokens"] == 10
+    assert chunks[-1]["output_tokens"] == 2
+
+
+async def _collect(stream) -> list[dict[str, object]]:
+    return [chunk async for chunk in stream]

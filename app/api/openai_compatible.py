@@ -1,9 +1,13 @@
 """OpenAI-compatible endpoints."""
 
 import asyncio
+import json
+from time import time
+from time import perf_counter
 
 from fastapi import HTTPException, status
 from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_async_session_factory
@@ -27,6 +31,23 @@ from app.schemas.chat import (
 )
 
 router = APIRouter(tags=["openai-compatible"])
+
+
+def _stream_chunk_bytes(*, response_id: str, model: str, delta: dict[str, str], finish_reason: str | None) -> bytes:
+    payload = {
+        "id": response_id,
+        "object": "chat.completion.chunk",
+        "created": int(time()),
+        "model": model,
+        "choices": [
+            {
+                "index": 0,
+                "delta": delta,
+                "finish_reason": finish_reason,
+            }
+        ],
+    }
+    return f"data: {json.dumps(payload)}\n\n".encode("utf-8")
 
 
 def _normalize_embedding_inputs(request: EmbeddingRequest) -> list[str]:
@@ -105,10 +126,63 @@ async def _run_shadow_request(
     request: ChatCompletionRequest,
     request_log_id: str,
     classification: dict[str, str],
+    settings: Settings,
 ) -> None:
     try:
-        shadow_result = await shadow_provider.invoke(request)
+        if request.stream and getattr(shadow_provider, "supports_streaming", False):
+            aggregated_content = ""
+            prompt_tokens = 0
+            completion_tokens = 0
+            finish_reason = "stop"
+            chunk_count = 0
+            started_at = perf_counter()
+            log_record(
+                settings,
+                level="INFO",
+                component="proxy.shadow",
+                category="stream",
+                message="Shadow stream started",
+                data={"request_id": request_log_id, "provider": shadow_provider.provider_name, "model": shadow_provider.model_id},
+            )
+            async for chunk in shadow_provider.stream_chat(request):
+                chunk_count += 1
+                aggregated_content += str(chunk.get("delta", ""))
+                prompt_tokens = max(prompt_tokens, int(chunk.get("input_tokens", 0)))
+                completion_tokens = max(completion_tokens, int(chunk.get("output_tokens", 0)))
+                if chunk.get("finish_reason"):
+                    finish_reason = str(chunk["finish_reason"])
+            price_per_token = getattr(shadow_provider, "price_per_token", 0.0)
+            shadow_result = {
+                "model": shadow_provider.model_id,
+                "content": aggregated_content,
+                "input_tokens": prompt_tokens,
+                "output_tokens": completion_tokens or len(aggregated_content.split()),
+                "latency_ms": int((perf_counter() - started_at) * 1000),
+                "finish_reason": finish_reason,
+                "cost_estimate": round((prompt_tokens + completion_tokens) * price_per_token, 6),
+                "raw_response": {"streamed": True, "chunk_count": chunk_count},
+                "provider": shadow_provider.provider_name,
+                "provider_family": shadow_provider.provider_family,
+            }
+            log_record(
+                settings,
+                level="INFO",
+                component="proxy.shadow",
+                category="stream",
+                message="Shadow stream completed",
+                data={"request_id": request_log_id, "provider": shadow_provider.provider_name, "model": shadow_provider.model_id, "chunk_count": chunk_count},
+            )
+        else:
+            shadow_result = await shadow_provider.invoke(request)
     except Exception:
+        log_record(
+            settings,
+            level="ERROR",
+            component="proxy.shadow",
+            category="error",
+            message="Shadow request failed",
+            data={"request_id": request_log_id, "provider": getattr(shadow_provider, "provider_name", "unknown"), "model": getattr(shadow_provider, "model_id", "unknown")},
+        )
         return
     await _persist_shadow_response(
         request_log_id=request_log_id,
@@ -240,12 +314,58 @@ async def _invoke_with_fallback(
     )
 
 
-@router.post("/v1/chat/completions", response_model=ChatCompletionResponse, dependencies=[Depends(require_api_token)])
+async def _stream_with_fallback(
+    provider_registry: dict[str, object],
+    selected_route,
+    request: ChatCompletionRequest,
+):
+    attempted = [selected_route.provider_key]
+    candidates = [(selected_route.provider_key, selected_route.decision.selected_model, selected_route.decision)]
+    for fallback in selected_route.decision.fallback_chain:
+        if fallback.provider in attempted or fallback.provider not in provider_registry:
+            continue
+        attempted.append(fallback.provider)
+        candidates.append((fallback.provider, fallback.model, selected_route.decision))
+
+    for index, (provider_key, selected_model, decision) in enumerate(candidates):
+        provider = provider_registry.get(provider_key)
+        if provider is None or not getattr(provider, "supports_streaming", False):
+            continue
+        started = False
+        try:
+            async for chunk in provider.stream_chat(request):
+                if not started and index > 0:
+                    decision.selected_provider = provider_key
+                    decision.selected_provider_family = getattr(provider, "provider_family", provider_key)
+                    decision.selected_model = selected_model
+                    decision.selected_mode = "fallback"
+                    decision.decision_rationale = (
+                        f"{decision.decision_rationale} Fallback engaged after runtime error."
+                    )
+                started = True
+                yield chunk, decision
+            return
+        except Exception:
+            if started:
+                raise
+            continue
+
+    raise HTTPException(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        detail="No streaming-capable provider in the selected route or fallback chain succeeded.",
+    )
+
+
+@router.post(
+    "/v1/chat/completions",
+    response_model=None,
+    dependencies=[Depends(require_api_token)],
+)
 async def chat_completions(
     request: ChatCompletionRequest,
     session: AsyncSession = Depends(get_async_session),
     settings: Settings = Depends(get_runtime_settings),
-) -> ChatCompletionResponse:
+) -> ChatCompletionResponse | StreamingResponse:
     request_log_id = None
     classification = classify_request(request)
     try:
@@ -261,6 +381,130 @@ async def chat_completions(
             classification=classification,
             settings=settings,
         )
+        if request.stream:
+            selected_provider = provider_registry.get(selected_route.provider_key)
+            if selected_provider is None or not getattr(selected_provider, "supports_streaming", False):
+                raise HTTPException(
+                    status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                    detail="Streaming is not supported for the selected route.",
+                )
+            response_id = request_log_id.replace("req_", "chatcmpl_")
+
+            async def event_stream():
+                started_at = perf_counter()
+                aggregated_content = ""
+                resolved_decision = selected_route.decision
+                provider_model = resolved_decision.selected_model
+                prompt_tokens = 0
+                completion_tokens = 0
+                finish_reason = "stop"
+                yield _stream_chunk_bytes(
+                    response_id=response_id,
+                    model=provider_model,
+                    delta={"role": "assistant"},
+                    finish_reason=None,
+                )
+                try:
+                    async for chunk, resolved_decision in _stream_with_fallback(provider_registry, selected_route, request):
+                        provider_model = str(chunk.get("model", provider_model))
+                        delta_text = str(chunk.get("delta", ""))
+                        if delta_text:
+                            aggregated_content += delta_text
+                            yield _stream_chunk_bytes(
+                                response_id=response_id,
+                                model=provider_model,
+                                delta={"content": delta_text},
+                                finish_reason=None,
+                            )
+                        prompt_tokens = max(prompt_tokens, int(chunk.get("input_tokens", 0)))
+                        completion_tokens = max(completion_tokens, int(chunk.get("output_tokens", 0)))
+                        if chunk.get("finish_reason"):
+                            finish_reason = str(chunk["finish_reason"])
+                    if prompt_tokens == 0:
+                        prompt_tokens = sum(len(message.content.split()) for message in request.messages)
+                    if completion_tokens == 0:
+                        completion_tokens = len(aggregated_content.split())
+                    provider_name = resolved_decision.selected_provider
+                    price_per_token = getattr(provider_registry[provider_name], "price_per_token", 0.0)
+                    provider_result = {
+                        "model": provider_model,
+                        "content": aggregated_content,
+                        "input_tokens": prompt_tokens,
+                        "output_tokens": completion_tokens,
+                        "latency_ms": int((perf_counter() - started_at) * 1000),
+                        "finish_reason": finish_reason,
+                        "cost_estimate": round((prompt_tokens + completion_tokens) * price_per_token, 6),
+                        "raw_response": {"streamed": True},
+                        "provider": provider_name,
+                        "provider_family": resolved_decision.selected_provider_family,
+                    }
+                    await _persist_selected_response_async(
+                        session,
+                        request=request,
+                        request_id=request_log_id,
+                        request_created_at=request_created_at,
+                        classification=classification,
+                        provider_result=provider_result,
+                        resolved_decision=resolved_decision,
+                    )
+                    for shadow_provider_key in selected_route.shadow_provider_keys:
+                        shadow_provider = provider_registry.get(shadow_provider_key)
+                        if shadow_provider is None:
+                            continue
+                        asyncio.create_task(
+                            _run_shadow_request(
+                                shadow_provider=shadow_provider,
+                                request=request,
+                                request_log_id=request_log_id,
+                                classification=classification,
+                                settings=settings,
+                            )
+                        )
+                    await session.commit()
+                    log_record(
+                        settings,
+                        level="INFO",
+                        component="proxy.chat",
+                        category="request",
+                        message="Streaming chat completion served",
+                        data={
+                            "request_id": request_log_id,
+                            "session_id": request.metadata.session_id,
+                            "domain": classification["domain"],
+                            "task_type": classification["task_type"],
+                            "selected_provider": provider_result["provider"],
+                            "selected_model": provider_result["model"],
+                            "selected_mode": resolved_decision.selected_mode,
+                            "stream": True,
+                        },
+                    )
+                    yield _stream_chunk_bytes(
+                        response_id=response_id,
+                        model=provider_model,
+                        delta={},
+                        finish_reason=finish_reason,
+                    )
+                except asyncio.CancelledError:
+                    await session.rollback()
+                    raise
+                except Exception as exc:
+                    await session.rollback()
+                    log_record(
+                        settings,
+                        level="ERROR",
+                        component="proxy.chat",
+                        category="error",
+                        message="Streaming chat completion failed",
+                        data={
+                            "request_id": request_log_id,
+                            "session_id": request.metadata.session_id,
+                            "error": str(exc),
+                        },
+                    )
+                    raise
+                yield b"data: [DONE]\n\n"
+
+            return StreamingResponse(event_stream(), media_type="text/event-stream")
         provider_result, resolved_decision = await _invoke_with_fallback(provider_registry, selected_route, request)
         await _persist_selected_response_async(
             session,
@@ -281,6 +525,7 @@ async def chat_completions(
                     request=request,
                     request_log_id=request_log_id,
                     classification=classification,
+                    settings=settings,
                 )
             )
         await session.commit()

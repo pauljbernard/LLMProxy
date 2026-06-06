@@ -30,6 +30,24 @@ services:
     command: python3 -m app.runtime worker
     env_file:
       - .env.example
+    environment:
+      LLMPROXY_WORKER_EXCLUDE_JOB_TYPES: training.run
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - exports_data:/data/exports
+      - datasets_data:/data/datasets
+      - models_data:/data/models
+      - checkpoints_data:/data/checkpoints
+      - reports_data:/data/reports
+      - logs_data:/data/logs
+
+  training-worker:
+    image: llmproxy:dev
+    command: python3 -m app.runtime training-worker
+    env_file:
+      - .env.example
     depends_on:
       - postgres
       - redis
