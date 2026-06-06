@@ -12,7 +12,7 @@ router = APIRouter(prefix="/datasets", tags=["datasets"])
 
 
 @router.post("/import", response_model=DatasetImportResponse, dependencies=[Depends(require_api_token)])
-async def import_dataset(
+def import_dataset(
     request: DatasetImportRequest,
     session: Session = Depends(get_session),
     settings: Settings = Depends(get_runtime_settings),

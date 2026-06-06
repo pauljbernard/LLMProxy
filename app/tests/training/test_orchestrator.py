@@ -39,7 +39,7 @@ def build_dataset_version() -> DatasetVersion:
     )
 
 
-def test_create_training_run_persists_artifacts_and_metrics(tmp_path: Path) -> None:
+def test_create_training_run_queues_pending_work(tmp_path: Path) -> None:
     session = FakeSession(build_dataset_version())
     settings = Settings(llmproxy_checkpoints_path=str(tmp_path))
 
@@ -57,11 +57,9 @@ def test_create_training_run_persists_artifacts_and_metrics(tmp_path: Path) -> N
     )
 
     assert response.training_mode == "lora"
-    assert response.status == "completed"
+    assert response.status == "pending"
     assert Path(response.artifact_path).exists()
-    assert Path(response.metrics["checkpoint_path"]).exists()
-    assert Path(response.metrics["log_path"]).exists()
-    assert Path(response.metrics["metrics_path"]).exists()
+    assert response.metrics == {}
     assert len(session.added) == 3
     assert session.flush_count == 1
 

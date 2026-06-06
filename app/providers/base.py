@@ -18,6 +18,7 @@ class BaseProvider(ABC):
     provider_family: str
     provider_name: str
     model_id: str
+    supports_embeddings: bool = False
 
     def __init__(
         self,
@@ -37,7 +38,7 @@ class BaseProvider(ABC):
             provider_name=self.provider_name,
             model_id=self.model_id,
             supports_streaming=True,
-            supports_embeddings=False,
+            supports_embeddings=self.supports_embeddings,
             supports_tools=False,
             max_context_tokens=128_000,
             max_output_tokens=8_192,
@@ -89,6 +90,15 @@ class BaseProvider(ABC):
     @abstractmethod
     async def chat(self, request: ChatCompletionRequest) -> dict[str, object]:
         raise NotImplementedError
+
+    async def embed(
+        self,
+        texts: Sequence[str],
+        *,
+        model: str | None = None,
+        dimensions: int | None = None,
+    ) -> list[list[float]]:
+        raise NotImplementedError(f"{self.provider_name} does not support embeddings.")
 
     async def invoke(self, request: ChatCompletionRequest) -> dict[str, object]:
         started_at = perf_counter()

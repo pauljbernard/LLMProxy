@@ -14,7 +14,7 @@ router = APIRouter(prefix="/evaluation", tags=["evaluation"])
 
 
 @router.post("/runs", response_model=EvaluationResult, dependencies=[Depends(require_operator_token)])
-async def submit_evaluation_run(
+def submit_evaluation_run(
     request: EvaluationRunRequest,
     session: Session = Depends(get_session),
     settings: Settings = Depends(get_runtime_settings),
@@ -23,12 +23,14 @@ async def submit_evaluation_run(
         response = run_evaluation(session, request=request, settings=settings)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except NotImplementedError as exc:
+        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=str(exc)) from exc
     session.commit()
     return response
 
 
 @router.get("/runs", response_model=list[EvaluationRunView], dependencies=[Depends(require_api_token)])
-async def list_evaluation_runs_endpoint(
+def list_evaluation_runs_endpoint(
     session: Session = Depends(get_session),
 ) -> list[EvaluationRunView]:
     runs = list_evaluation_runs(session)
@@ -49,7 +51,7 @@ async def list_evaluation_runs_endpoint(
 
 
 @router.get("/kpis", response_model=KpiReportResponse, dependencies=[Depends(require_api_token)])
-async def get_kpi_report(
+def get_kpi_report(
     session: Session = Depends(get_session),
     settings: Settings = Depends(get_runtime_settings),
 ) -> KpiReportResponse:

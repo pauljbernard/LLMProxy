@@ -26,6 +26,23 @@ class FakeSession:
         return None
 
 
+class FakeAsyncSession:
+    def __init__(self, sync_session: FakeSession) -> None:
+        self.sync_session = sync_session
+
+    async def run_sync(self, fn):
+        return fn(self.sync_session)
+
+    async def commit(self) -> None:
+        self.sync_session.commit()
+
+    async def rollback(self) -> None:
+        return None
+
+    async def close(self) -> None:
+        self.sync_session.close()
+
+
 def test_ensemble_requires_auth() -> None:
     client = TestClient(app)
     response = client.post(
@@ -41,7 +58,7 @@ def test_ensemble_requires_auth() -> None:
 
 def test_ensemble_returns_synthesized_answer_and_persists(monkeypatch) -> None:
     from app.proxy import ensemble as ensemble_module
-    from app.api.dependencies import get_session
+    from app.api.dependencies import get_async_session
 
     registry = {
         "anthropic": AnthropicProvider(
@@ -106,7 +123,8 @@ def test_ensemble_returns_synthesized_answer_and_persists(monkeypatch) -> None:
     monkeypatch.setattr(ensemble_module, "get_provider_registry", lambda settings: registry)
 
     fake_session = FakeSession()
-    app.dependency_overrides[get_session] = lambda: fake_session
+    fake_async_session = FakeAsyncSession(fake_session)
+    app.dependency_overrides[get_async_session] = lambda: fake_async_session
     client = TestClient(app)
     response = client.post(
         "/proxy/ensemble",

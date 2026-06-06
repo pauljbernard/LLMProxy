@@ -1,13 +1,13 @@
 """OpenAI-compatible endpoints."""
 
-from hashlib import sha256
-from math import fmod
+import asyncio
 
 from fastapi import HTTPException, status
 from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import get_runtime_settings, get_session, require_api_token
+from app.db.session import get_async_session_factory
+from app.api.dependencies import get_async_session, get_runtime_settings, require_api_token
 from app.config import Settings
 from app.integration.performance import sample_performance
 from app.proxy.candidates import capture_training_candidate
@@ -41,21 +41,174 @@ def _normalize_embedding_inputs(request: EmbeddingRequest) -> list[str]:
     return values
 
 
-def _embedding_for_text(text: str, *, dimensions: int = 16) -> list[float]:
-    digest = sha256(text.encode("utf-8")).digest()
-    values: list[float] = []
-    for index in range(dimensions):
-        byte_value = digest[index % len(digest)]
-        values.append(round(fmod(byte_value / 255.0, 1.0), 6))
-    return values
+def _select_embedding_provider(
+    *,
+    request: EmbeddingRequest,
+    settings: Settings,
+    provider_registry: dict[str, object],
+):
+    provider_precedence = ("openai", "ollama", "azure_openai", "google", "anthropic", "xai", "bedrock")
+    if request.model == settings.llmproxy_ollama_model and "ollama" in provider_registry:
+        return provider_registry["ollama"]
+    if request.model.startswith("text-embedding") and "openai" in provider_registry and settings.llmproxy_openai_api_key:
+        return provider_registry["openai"]
+    if request.model.startswith("text-embedding"):
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="OpenAI embeddings were requested but no OpenAI embedding provider is configured.",
+        )
+    for provider_key in provider_precedence:
+        provider = provider_registry.get(provider_key)
+        if provider is None:
+            continue
+        capability = getattr(provider, "capability", None)
+        if capability is not None and capability.supports_embeddings and capability.model_id == request.model:
+            return provider
+    for provider in provider_registry.values():
+        capability = getattr(provider, "capability", None)
+        if capability is not None and capability.supports_embeddings:
+            return provider
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail="No embedding provider is configured for this request.",
+    )
 
 
-def _sample_quality_score(*, provider: str, route_type: str) -> float:
-    if provider != "ollama":
-        return 0.88
-    if route_type in {"local_production", "local_canary", "shadow"}:
-        return 0.89
-    return 0.84
+async def _persist_shadow_response(
+    *,
+    request_log_id: str,
+    shadow_result: dict[str, object],
+    classification: dict[str, str],
+) -> None:
+    session = get_async_session_factory()()
+    try:
+        def _persist(sync_session):
+            record_model_response(sync_session, request_log_id, shadow_result, response_role="shadow_response")
+            sample_performance(
+                sync_session,
+                model_alias=str(shadow_result["model"]),
+                domain=classification["domain"],
+                request_log_id=request_log_id,
+                route_type="shadow",
+                cost_estimate=float(shadow_result["cost_estimate"]),
+                quality_score=None,
+                successful=True,
+            )
+
+        await session.run_sync(_persist)
+        await session.commit()
+    except Exception:
+        await session.rollback()
+    finally:
+        await session.close()
+
+
+async def _run_shadow_request(
+    *,
+    shadow_provider,
+    request: ChatCompletionRequest,
+    request_log_id: str,
+    classification: dict[str, str],
+) -> None:
+    try:
+        shadow_result = await shadow_provider.invoke(request)
+    except Exception:
+        return
+    await _persist_shadow_response(
+        request_log_id=request_log_id,
+        shadow_result=shadow_result,
+        classification=classification,
+    )
+
+
+async def _record_request_async(
+    session: AsyncSession,
+    *,
+    request: ChatCompletionRequest,
+    classification: dict[str, str],
+) -> tuple[str, object]:
+    def _write(sync_session):
+        request_log = record_request(sync_session, request, classification)
+        sync_session.flush()
+        return request_log.id, request_log.created_at
+
+    return await session.run_sync(_write)
+
+
+async def _resolve_route_and_registry(
+    session: AsyncSession,
+    *,
+    request_id: str,
+    request: ChatCompletionRequest,
+    classification: dict[str, str],
+    settings: Settings,
+):
+    def _resolve(sync_session):
+        selected_route = select_route(request_id, request, classification, settings, session=sync_session)
+        provider_registry = get_provider_registry(settings, session=sync_session)
+        return selected_route, provider_registry
+
+    return await session.run_sync(_resolve)
+
+
+async def _persist_selected_response_async(
+    session: AsyncSession,
+    *,
+    request: ChatCompletionRequest,
+    request_id: str,
+    request_created_at,
+    classification: dict[str, str],
+    provider_result: dict[str, object],
+    resolved_decision,
+) -> None:
+    def _persist(sync_session):
+        record_routing_decision(sync_session, request_id, resolved_decision)
+        sync_session.flush()
+        response_record = record_model_response(sync_session, request_id, provider_result, response_role="selected_response")
+        sample_performance(
+            sync_session,
+            model_alias=str(provider_result["model"]),
+            domain=classification["domain"],
+            request_log_id=request_id,
+            route_type=resolved_decision.selected_mode,
+            cost_estimate=float(provider_result["cost_estimate"]),
+            quality_score=None,
+            successful=True,
+        )
+        if classification["privacy_level"] != "private":
+            capture_training_candidate(
+                sync_session,
+                request_log_id=request_id,
+                routing_decision_id=resolved_decision.routing_decision_id,
+                session_id=request.metadata.session_id,
+                domain=classification["domain"],
+                task_type=classification["task_type"],
+                quality_score=0.82 if provider_result["provider"] == "ollama" else 0.86,
+                selected_response=str(provider_result["content"]),
+                messages=[message.model_dump(mode="json") for message in request.messages],
+                provenance={
+                    "request_id": request_id,
+                    "source": resolved_decision.selected_mode,
+                    "teacher_models": [provider_result["model"]],
+                    "judge_model": None,
+                    "created_at": request_created_at.isoformat() if request_created_at else None,
+                },
+                validation={
+                    "validated": True,
+                    "validation_type": "rule_based_capture",
+                    "tests_passed": None,
+                    "static_checks_passed": None,
+                    "secrets_detected": False,
+                },
+                metadata={
+                    "selected_provider": provider_result["provider"],
+                    "selected_model": provider_result["model"],
+                    "selected_response_id": response_record.id,
+                    "privacy_level": classification["privacy_level"],
+                },
+            )
+
+    await session.run_sync(_persist)
 
 
 async def _invoke_with_fallback(
@@ -94,85 +247,47 @@ async def _invoke_with_fallback(
 @router.post("/v1/chat/completions", response_model=ChatCompletionResponse, dependencies=[Depends(require_api_token)])
 async def chat_completions(
     request: ChatCompletionRequest,
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_async_session),
     settings: Settings = Depends(get_runtime_settings),
 ) -> ChatCompletionResponse:
-    request_log = None
+    request_log_id = None
     classification = classify_request(request)
     try:
-        request_log = record_request(session, request, classification)
-        session.flush()
-        selected_route = select_route(request_log.id, request, classification, settings, session=session)
-
-        provider_registry = get_provider_registry(settings, session=session)
-        provider_result, resolved_decision = await _invoke_with_fallback(provider_registry, selected_route, request)
-        record_routing_decision(session, request_log.id, resolved_decision)
-        session.flush()
-        response_record = record_model_response(session, request_log.id, provider_result, response_role="selected_response")
-        sample_performance(
+        request_log_id, request_created_at = await _record_request_async(
             session,
-            model_alias=str(provider_result["model"]),
-            domain=classification["domain"],
-            request_log_id=request_log.id,
-            route_type=resolved_decision.selected_mode,
-            cost_estimate=float(provider_result["cost_estimate"]),
-            quality_score=_sample_quality_score(
-                provider=str(provider_result["provider"]),
-                route_type=resolved_decision.selected_mode,
-            ),
-            successful=True,
+            request=request,
+            classification=classification,
+        )
+        selected_route, provider_registry = await _resolve_route_and_registry(
+            session,
+            request_id=request_log_id,
+            request=request,
+            classification=classification,
+            settings=settings,
+        )
+        provider_result, resolved_decision = await _invoke_with_fallback(provider_registry, selected_route, request)
+        await _persist_selected_response_async(
+            session,
+            request=request,
+            request_id=request_log_id,
+            request_created_at=request_created_at,
+            classification=classification,
+            provider_result=provider_result,
+            resolved_decision=resolved_decision,
         )
         for shadow_provider_key in selected_route.shadow_provider_keys:
             shadow_provider = provider_registry.get(shadow_provider_key)
             if shadow_provider is None:
                 continue
-            try:
-                shadow_result = await shadow_provider.invoke(request)
-            except Exception:
-                continue
-            record_model_response(session, request_log.id, shadow_result, response_role="shadow_response")
-            sample_performance(
-                session,
-                model_alias=str(shadow_result["model"]),
-                domain=classification["domain"],
-                request_log_id=request_log.id,
-                route_type="shadow",
-                cost_estimate=float(shadow_result["cost_estimate"]),
-                quality_score=_sample_quality_score(provider=str(shadow_result["provider"]), route_type="shadow"),
-                successful=True,
+            asyncio.create_task(
+                _run_shadow_request(
+                    shadow_provider=shadow_provider,
+                    request=request,
+                    request_log_id=request_log_id,
+                    classification=classification,
+                )
             )
-        capture_training_candidate(
-            session,
-            request_log_id=request_log.id,
-            routing_decision_id=resolved_decision.routing_decision_id,
-            session_id=request.metadata.session_id,
-            domain=classification["domain"],
-            task_type=classification["task_type"],
-            quality_score=0.82 if provider_result["provider"] == "ollama" else 0.86,
-            selected_response=str(provider_result["content"]),
-            messages=[message.model_dump(mode="json") for message in request.messages],
-            provenance={
-                "request_id": request_log.id,
-                "source": resolved_decision.selected_mode,
-                "teacher_models": [provider_result["model"]],
-                "judge_model": None,
-                "created_at": request_log.created_at.isoformat() if request_log.created_at else None,
-            },
-            validation={
-                "validated": True,
-                "validation_type": "rule_based_capture",
-                "tests_passed": None,
-                "static_checks_passed": None,
-                "secrets_detected": classification["privacy_level"] == "private",
-            },
-            metadata={
-                "selected_provider": provider_result["provider"],
-                "selected_model": provider_result["model"],
-                "selected_response_id": response_record.id,
-                "privacy_level": classification["privacy_level"],
-            },
-        )
-        session.commit()
+        await session.commit()
         log_record(
             settings,
             level="INFO",
@@ -180,7 +295,7 @@ async def chat_completions(
             category="request",
             message="Chat completion served",
             data={
-                "request_id": request_log.id,
+                "request_id": request_log_id,
                 "session_id": request.metadata.session_id,
                 "domain": classification["domain"],
                 "task_type": classification["task_type"],
@@ -192,7 +307,7 @@ async def chat_completions(
         return ChatCompletionResponse.from_request(
             request,
             content=str(provider_result["content"]),
-            response_id=request_log.id.replace("req_", "chatcmpl_"),
+            response_id=request_log_id.replace("req_", "chatcmpl_"),
             resolved_model=str(provider_result["model"]),
         )
     except HTTPException as exc:
@@ -203,7 +318,7 @@ async def chat_completions(
             category="error",
             message="Chat completion failed",
             data={
-                "request_id": request_log.id if request_log is not None else None,
+                "request_id": request_log_id,
                 "session_id": request.metadata.session_id,
                 "detail": exc.detail,
                 "status_code": exc.status_code,
@@ -211,6 +326,7 @@ async def chat_completions(
         )
         raise
     except Exception as exc:
+        await session.rollback()
         log_record(
             settings,
             level="ERROR",
@@ -218,7 +334,7 @@ async def chat_completions(
             category="error",
             message="Unexpected chat completion failure",
             data={
-                "request_id": request_log.id if request_log is not None else None,
+                "request_id": request_log_id,
                 "session_id": request.metadata.session_id,
                 "error": str(exc),
             },
@@ -227,18 +343,31 @@ async def chat_completions(
 
 
 @router.get("/v1/models", response_model=list[ModelInfo], dependencies=[Depends(require_api_token)])
-async def list_models(
+def list_models(
     settings: Settings = Depends(get_runtime_settings),
 ) -> list[ModelInfo]:
     return [ModelInfo.model_validate(item) for item in list_proxy_models(settings)]
 
 
 @router.post("/v1/embeddings", response_model=EmbeddingResponse, dependencies=[Depends(require_api_token)])
-async def embeddings(request: EmbeddingRequest) -> EmbeddingResponse:
+async def embeddings(
+    request: EmbeddingRequest,
+    settings: Settings = Depends(get_runtime_settings),
+) -> EmbeddingResponse:
     inputs = _normalize_embedding_inputs(request)
+    provider_registry = get_provider_registry(settings)
+    provider = _select_embedding_provider(
+        request=request,
+        settings=settings,
+        provider_registry=provider_registry,
+    )
+    try:
+        vectors = await provider.embed(inputs, model=request.model, dimensions=request.dimensions)
+    except NotImplementedError as exc:
+        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=str(exc)) from exc
     data = [
-        EmbeddingVector(index=index, embedding=_embedding_for_text(text))
-        for index, text in enumerate(inputs)
+        EmbeddingVector(index=index, embedding=vector)
+        for index, vector in enumerate(vectors)
     ]
     prompt_tokens = sum(len(text.split()) for text in inputs)
     response = EmbeddingResponse(

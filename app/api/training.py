@@ -11,8 +11,8 @@ from app.training.orchestrator import create_training_run, list_training_runs
 router = APIRouter(prefix="/training", tags=["training"])
 
 
-@router.post("/runs", response_model=TrainingRunResponse, dependencies=[Depends(require_api_token)])
-async def submit_training_run(
+@router.post("/runs", response_model=TrainingRunResponse, status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(require_api_token)])
+def submit_training_run(
     request: TrainingRunRequest,
     session: Session = Depends(get_session),
     settings: Settings = Depends(get_runtime_settings),
@@ -26,7 +26,7 @@ async def submit_training_run(
 
 
 @router.get("/runs", response_model=list[TrainingRunView], dependencies=[Depends(require_api_token)])
-async def list_training_runs_endpoint(
+def list_training_runs_endpoint(
     session: Session = Depends(get_session),
 ) -> list[TrainingRunView]:
     runs = list_training_runs(session)

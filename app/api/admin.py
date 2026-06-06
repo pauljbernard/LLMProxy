@@ -66,24 +66,24 @@ def _write_env_value(env_file: Path, key: str, value: str) -> None:
     env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 @router.get("")
-async def admin_console() -> FileResponse:
+def admin_console() -> FileResponse:
     return FileResponse(STATIC_ROOT / "index.html")
 
 
 @router.get("/static/{asset_path:path}")
-async def admin_static(asset_path: str) -> FileResponse:
+def admin_static(asset_path: str) -> FileResponse:
     return FileResponse(STATIC_ROOT / asset_path)
 
 
 @router.get("/api/config", dependencies=[Depends(require_api_token)])
-async def get_config(
+def get_config(
     settings: Settings = Depends(get_runtime_settings),
 ) -> dict[str, Any]:
     return settings_payload(settings)
 
 
 @router.get("/api/config/validate", dependencies=[Depends(require_api_token)])
-async def validate_config(
+def validate_config(
     settings: Settings = Depends(get_runtime_settings),
 ) -> dict[str, Any]:
     from app.db.session import get_engine
@@ -100,7 +100,7 @@ async def validate_config(
 
 
 @router.post("/api/config/set", dependencies=[Depends(require_operator_token)])
-async def set_config_value(request: ConfigSetRequest) -> dict[str, Any]:
+def set_config_value(request: ConfigSetRequest) -> dict[str, Any]:
     env_file = Path(request.env_file)
     _write_env_value(env_file, request.key, request.value)
     log_record(
@@ -116,7 +116,7 @@ async def set_config_value(request: ConfigSetRequest) -> dict[str, Any]:
 
 
 @router.get("/api/ops/summary", dependencies=[Depends(require_api_token)])
-async def get_operations_summary(
+def get_operations_summary(
     session: Session = Depends(get_session),
     settings: Settings = Depends(get_runtime_settings),
 ) -> dict[str, Any]:
@@ -124,7 +124,7 @@ async def get_operations_summary(
 
 
 @router.get("/api/ops/logs", dependencies=[Depends(require_api_token)])
-async def get_operations_logs(
+def get_operations_logs(
     limit: int = Query(default=100, le=500),
     level: str | None = None,
     component: str | None = None,
@@ -141,7 +141,7 @@ async def get_operations_logs(
 
 
 @router.get("/api/ops/errors", dependencies=[Depends(require_api_token)])
-async def get_operations_errors(
+def get_operations_errors(
     limit: int = Query(default=100, le=500),
     settings: Settings = Depends(get_runtime_settings),
 ) -> list[dict[str, Any]]:
@@ -149,7 +149,7 @@ async def get_operations_errors(
 
 
 @router.get("/api/ops/audit", dependencies=[Depends(require_api_token)])
-async def get_operations_audit(
+def get_operations_audit(
     limit: int = Query(default=100, le=500),
     settings: Settings = Depends(get_runtime_settings),
 ) -> list[dict[str, Any]]:
@@ -157,7 +157,7 @@ async def get_operations_audit(
 
 
 @router.get("/api/ops/live", dependencies=[Depends(require_api_token)])
-async def get_operations_live(
+def get_operations_live(
     session: Session = Depends(get_session),
     settings: Settings = Depends(get_runtime_settings),
 ) -> dict[str, Any]:
@@ -170,7 +170,7 @@ async def get_operations_live(
 
 
 @router.get("/api/proxy/requests", dependencies=[Depends(require_api_token)])
-async def list_proxy_requests(
+def list_proxy_requests(
     limit: int = Query(default=20, le=200),
     session_id: str | None = None,
     domain: str | None = None,
@@ -189,7 +189,7 @@ async def list_proxy_requests(
 
 
 @router.get("/api/proxy/requests/{request_id}", dependencies=[Depends(require_api_token)])
-async def show_proxy_request(
+def show_proxy_request(
     request_id: str,
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
@@ -218,7 +218,7 @@ async def show_proxy_request(
 
 
 @router.get("/api/exports", dependencies=[Depends(require_api_token)])
-async def list_exports(
+def list_exports(
     limit: int = Query(default=20, le=200),
     domain: str | None = None,
     session: Session = Depends(get_session),
@@ -231,7 +231,7 @@ async def list_exports(
 
 
 @router.get("/api/datasets/imports", dependencies=[Depends(require_api_token)])
-async def list_dataset_imports(
+def list_dataset_imports(
     limit: int = Query(default=20, le=200),
     session: Session = Depends(get_session),
 ) -> list[dict[str, Any]]:
@@ -240,7 +240,7 @@ async def list_dataset_imports(
 
 
 @router.get("/api/datasets/versions", dependencies=[Depends(require_api_token)])
-async def list_dataset_versions(
+def list_dataset_versions(
     limit: int = Query(default=20, le=200),
     domain: str | None = None,
     session: Session = Depends(get_session),
@@ -253,7 +253,7 @@ async def list_dataset_versions(
 
 
 @router.get("/api/training/runs/{training_run_id}", dependencies=[Depends(require_api_token)])
-async def show_training_run(
+def show_training_run(
     training_run_id: str,
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
@@ -264,7 +264,7 @@ async def show_training_run(
 
 
 @router.get("/api/evaluation/runs/{evaluation_run_id}", dependencies=[Depends(require_api_token)])
-async def show_evaluation_run(
+def show_evaluation_run(
     evaluation_run_id: str,
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
@@ -275,7 +275,7 @@ async def show_evaluation_run(
 
 
 @router.get("/api/jobs", dependencies=[Depends(require_api_token)])
-async def list_jobs(
+def list_jobs(
     limit: int = Query(default=50, le=500),
     status_filter: str | None = Query(default=None, alias="status"),
     job_type: str | None = None,
@@ -291,7 +291,7 @@ async def list_jobs(
 
 
 @router.get("/api/jobs/{job_id}", dependencies=[Depends(require_api_token)])
-async def show_job(job_id: str, session: Session = Depends(get_session)) -> dict[str, Any]:
+def show_job(job_id: str, session: Session = Depends(get_session)) -> dict[str, Any]:
     job = session.get(JobQueueRecord, job_id)
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
@@ -299,7 +299,7 @@ async def show_job(job_id: str, session: Session = Depends(get_session)) -> dict
 
 
 @router.post("/api/jobs/{job_id}/retry", dependencies=[Depends(require_operator_token)])
-async def retry_job(
+def retry_job(
     job_id: str,
     request: JobRetryRequest,
     session: Session = Depends(get_session),
@@ -329,7 +329,7 @@ async def retry_job(
 
 
 @router.post("/api/jobs/{job_id}/cancel", dependencies=[Depends(require_operator_token)])
-async def cancel_job(
+def cancel_job(
     job_id: str,
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
@@ -352,7 +352,7 @@ async def cancel_job(
 
 
 @router.post("/api/jobs/run-once", dependencies=[Depends(require_operator_token)])
-async def run_jobs_once(_principal: AuthPrincipal = Depends(require_operator_token)) -> dict[str, Any]:
+def run_jobs_once(_principal: AuthPrincipal = Depends(require_operator_token)) -> dict[str, Any]:
     processed = run_worker_iteration()
     log_record(
         settings=get_runtime_settings(),
@@ -367,7 +367,7 @@ async def run_jobs_once(_principal: AuthPrincipal = Depends(require_operator_tok
 
 
 @router.get("/api/events", dependencies=[Depends(require_api_token)])
-async def list_events(
+def list_events(
     limit: int = Query(default=50, le=500),
     event_type: str | None = None,
     unprocessed: bool = False,
@@ -383,7 +383,7 @@ async def list_events(
 
 
 @router.get("/api/events/{event_id}", dependencies=[Depends(require_api_token)])
-async def show_event(event_id: str, session: Session = Depends(get_session)) -> dict[str, Any]:
+def show_event(event_id: str, session: Session = Depends(get_session)) -> dict[str, Any]:
     event = session.get(IntegrationEvent, event_id)
     if event is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found.")
@@ -391,7 +391,7 @@ async def show_event(event_id: str, session: Session = Depends(get_session)) -> 
 
 
 @router.post("/api/events/process", dependencies=[Depends(require_operator_token)])
-async def process_events(
+def process_events(
     session: Session = Depends(get_session),
     settings: Settings = Depends(get_runtime_settings),
 ) -> dict[str, Any]:
@@ -410,7 +410,7 @@ async def process_events(
 
 
 @router.post("/api/events/{event_id}/replay", dependencies=[Depends(require_operator_token)])
-async def replay_event(
+def replay_event(
     event_id: str,
     session: Session = Depends(get_session),
     settings: Settings = Depends(get_runtime_settings),
@@ -441,7 +441,7 @@ async def replay_event(
 
 
 @router.post("/api/scheduler/run-once", dependencies=[Depends(require_operator_token)])
-async def run_scheduler_once(_principal: AuthPrincipal = Depends(require_operator_token)) -> dict[str, Any]:
+def run_scheduler_once(_principal: AuthPrincipal = Depends(require_operator_token)) -> dict[str, Any]:
     run_scheduler_iteration()
     log_record(
         settings=get_runtime_settings(),

@@ -38,7 +38,7 @@ def record_teacher_comparison_sample(
         request_log_id=str(payload.get("request_log_id", generate_prefixed_id("req"))),
         route_type="teacher_comparison",
         cost_estimate=0.0,
-        quality_score=0.9,
+        quality_score=None,
         successful=True,
     )
     session.add(sample)

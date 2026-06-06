@@ -93,6 +93,7 @@ class EmbeddingRequest(BaseModel):
     model: str
     input: str | list[str] | list[EmbeddingRequestInput]
     user: str | None = None
+    dimensions: int | None = None
 
 
 class EmbeddingVector(BaseModel):

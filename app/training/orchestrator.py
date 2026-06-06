@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.config import Settings
 from app.db.models import DatasetVersion, TrainingRun
 from app.integration.events import emit_event
+from app.integration.jobs import enqueue_training_run_job
 from app.proxy.recorder import generate_prefixed_id
 from app.schemas.training import TrainingRunRequest, TrainingRunResponse
 from app.training.checkpointing import save_json_artifact
@@ -31,6 +32,8 @@ def create_training_run(
     dataset_version = session.get(DatasetVersion, request.dataset_version_id)
     if dataset_version is None:
         raise ValueError(f"Dataset version '{request.dataset_version_id}' was not found.")
+    if request.training_mode not in {"lora", "qlora"}:
+        raise ValueError(f"Unsupported training mode '{request.training_mode}'.")
 
     training_run_id = generate_prefixed_id("train")
     adapter_name = request.adapter_name or f"{dataset_version.domain}-{request.training_mode}-{training_run_id}"
@@ -55,7 +58,7 @@ def create_training_run(
         dataset_version_id=request.dataset_version_id,
         base_model=request.base_model,
         training_mode=request.training_mode,
-        status="running",
+        status="pending",
         training_config_json=training_config,
         metrics_json={},
         artifact_path=str(artifact_dir),
@@ -64,7 +67,7 @@ def create_training_run(
     session.flush()
     emit_event(
         session,
-        event_type="training.started",
+        event_type="training.queued",
         source="llmproxy",
         payload={
             "training_run_id": training_run_id,
@@ -72,13 +75,68 @@ def create_training_run(
             "training_mode": request.training_mode,
         },
     )
+    enqueue_training_run_job(session, training_run_id=training_run_id)
 
-    if request.training_mode == "lora":
-        trainer_result = run_lora(artifact_dir=artifact_dir, training_config=training_config)
-    elif request.training_mode == "qlora":
-        trainer_result = run_qlora(artifact_dir=artifact_dir, training_config=training_config)
-    else:
-        raise ValueError(f"Unsupported training mode '{request.training_mode}'.")
+    return TrainingRunResponse(
+        training_run_id=training_run.id,
+        dataset_version_id=training_run.dataset_version_id,
+        training_mode=training_run.training_mode,
+        status=training_run.status,
+        artifact_path=training_run.artifact_path,
+        metrics=training_run.metrics_json,
+    )
+
+
+def execute_training_run(
+    session: Session,
+    *,
+    training_run_id: str,
+    settings: Settings,
+) -> TrainingRun:
+    training_run = session.get(TrainingRun, training_run_id)
+    if training_run is None:
+        raise ValueError(f"Training run '{training_run_id}' was not found.")
+    dataset_version = session.get(DatasetVersion, training_run.dataset_version_id)
+    if dataset_version is None:
+        raise ValueError(f"Dataset version '{training_run.dataset_version_id}' was not found.")
+
+    artifact_dir = Path(settings.llmproxy_checkpoints_path) / training_run.id
+    training_config = dict(training_run.training_config_json)
+    training_run.status = "running"
+    emit_event(
+        session,
+        event_type="training.started",
+        source="llmproxy",
+        payload={
+            "training_run_id": training_run.id,
+            "dataset_version_id": training_run.dataset_version_id,
+            "training_mode": training_run.training_mode,
+        },
+    )
+    session.flush()
+    try:
+        if training_run.training_mode == "lora":
+            trainer_result = run_lora(artifact_dir=artifact_dir, training_config=training_config)
+        elif training_run.training_mode == "qlora":
+            trainer_result = run_qlora(artifact_dir=artifact_dir, training_config=training_config)
+        else:
+            raise ValueError(f"Unsupported training mode '{training_run.training_mode}'.")
+    except Exception as exc:
+        training_run.status = "failed"
+        training_run.metrics_json = {"error": str(exc)}
+        training_run.completed_at = datetime.now(timezone.utc)
+        emit_event(
+            session,
+            event_type="training.failed",
+            source="llmproxy",
+            payload={
+                "training_run_id": training_run.id,
+                "dataset_version_id": training_run.dataset_version_id,
+                "training_mode": training_run.training_mode,
+                "error": str(exc),
+            },
+        )
+        raise
 
     training_run.status = str(trainer_result["status"])
     training_run.metrics_json = {
@@ -100,12 +158,4 @@ def create_training_run(
             "artifact_path": training_run.artifact_path,
         },
     )
-
-    return TrainingRunResponse(
-        training_run_id=training_run.id,
-        dataset_version_id=training_run.dataset_version_id,
-        training_mode=training_run.training_mode,
-        status=training_run.status,
-        artifact_path=training_run.artifact_path,
-        metrics=training_run.metrics_json,
-    )
+    return training_run

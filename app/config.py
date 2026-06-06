@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     llmproxy_api_port: int = 8000
     llmproxy_database_url: str = "postgresql+psycopg://llm:llm@localhost:5432/llmproxy"
     llmproxy_redis_url: str = "redis://localhost:6379/0"
+    llmproxy_db_pool_size: int = 10
+    llmproxy_db_max_overflow: int = 20
     llmproxy_database_wait_timeout_seconds: int = 30
     llmproxy_run_migrations_on_start: bool = True
     llmproxy_provider_timeout_seconds: float = 60.0
