@@ -50,6 +50,7 @@ def create_training_run(
         "validation_path": dataset_version.validation_path,
         "test_path": dataset_version.test_path,
     }
+    training_config["config_path"] = str(artifact_dir / "training-config.json")
     config_path = save_json_artifact(artifact_dir, "training-config.json", training_config)
     training_config["config_path"] = config_path
 
@@ -118,6 +119,7 @@ def execute_training_run(
         },
     )
     session.flush()
+    session.commit()
     try:
         if training_run.training_mode == "lora":
             trainer_result = run_lora(
@@ -148,6 +150,7 @@ def execute_training_run(
                 "error": str(exc),
             },
         )
+        session.commit()
         raise
 
     training_run.status = str(trainer_result["status"])

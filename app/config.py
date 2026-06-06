@@ -1,6 +1,7 @@
 """Configuration models for llmProxy."""
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -76,6 +77,23 @@ class Settings(BaseSettings):
             "agent_systems": 0.13,
         }
     )
+    llmproxy_benchmarks_path: str = Field(
+        default_factory=lambda: (
+            str(path)
+            if (path := Path(__file__).resolve().parent.parent / "benchmarks").exists()
+            else ("/app/benchmarks" if Path("/app/benchmarks").exists() else "benchmarks")
+        )
+    )
+    llmproxy_promotion_min_overall_score: float = 0.85
+    llmproxy_promotion_domain_min_scores: dict[str, float] = Field(
+        default_factory=lambda: {
+            "coding": 0.80,
+            "software_architecture": 0.85,
+            "writing_style": 0.80,
+        }
+    )
+    llmproxy_promotion_max_quality_delta_vs_frontier: float = 0.05
+    llmproxy_promotion_min_value_per_dollar_gain_vs_frontier: float = 3.0
     llmproxy_exports_path: str = "/data/exports"
     llmproxy_datasets_path: str = "/data/datasets"
     llmproxy_models_path: str = "/data/models"

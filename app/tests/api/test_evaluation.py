@@ -4,7 +4,6 @@ from fastapi.testclient import TestClient
 
 from app.db.models import EvaluationRun
 from app.main import app
-from app.schemas.evaluation import EvaluationResult
 from app.schemas.integration import KpiMetricView, KpiReportResponse
 
 
@@ -29,12 +28,17 @@ def test_submit_evaluation_run_requires_operator_token() -> None:
     assert response.status_code == 403
 
 
-def test_submit_evaluation_run_returns_response(monkeypatch) -> None:
+def test_submit_evaluation_run_queues_job(monkeypatch) -> None:
     from app.api import evaluation as evaluation_api
     from app.api.dependencies import get_runtime_settings
     from app.config import Settings
 
     class FakeSession:
+        added = []
+
+        def add(self, item) -> None:
+            self.added.append(item)
+
         def commit(self) -> None:
             return None
 
@@ -43,18 +47,14 @@ def test_submit_evaluation_run_returns_response(monkeypatch) -> None:
 
     monkeypatch.setattr(
         evaluation_api,
-        "run_evaluation",
-        lambda session, request, settings: EvaluationResult(
+        "create_evaluation_run",
+        lambda session, request, settings: evaluation_api.EvaluationEnqueueResponse(
+            job_id="job_1",
             evaluation_run_id="eval_1",
             training_run_id=request.training_run_id,
-            domain="coding",
-            frontier_baseline_name="claude-3-5-sonnet",
-            overall_score=0.9,
-            quality_delta_vs_frontier=0.02,
-            value_per_dollar_gain_vs_frontier=4.1,
-            promotion_status="approved",
-            package_manifest_path="/tmp/model-package.json",
-            result={"promotion_status": "approved"},
+            status="pending",
+            queued=True,
+            frontier_baseline_name=request.frontier_baseline_name,
         ),
     )
 
@@ -70,8 +70,11 @@ def test_submit_evaluation_run_returns_response(monkeypatch) -> None:
     )
     app.dependency_overrides.clear()
 
-    assert response.status_code == 200
-    assert response.json()["promotion_status"] == "approved"
+    assert response.status_code == 202
+    assert response.json()["queued"] is True
+    assert response.json()["job_id"] == "job_1"
+    assert response.json()["evaluation_run_id"] == "eval_1"
+    assert response.json()["training_run_id"] == "train_1"
 
 
 def test_list_evaluation_runs_returns_serialized_runs(monkeypatch) -> None:
@@ -90,6 +93,8 @@ def test_list_evaluation_runs_returns_serialized_runs(monkeypatch) -> None:
                 training_run_id="train_1",
                 domain="coding",
                 frontier_baseline_name="claude-3-5-sonnet",
+                status="completed",
+                promotion_status="approved",
                 overall_score=0.9,
                 quality_delta_vs_frontier=0.02,
                 value_per_dollar_gain_vs_frontier=4.1,
@@ -109,6 +114,7 @@ def test_list_evaluation_runs_returns_serialized_runs(monkeypatch) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert len(payload) == 1
+    assert payload[0]["status"] == "completed"
     assert payload[0]["promotion_status"] == "approved"
 
 

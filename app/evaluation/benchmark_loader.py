@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from app.config import Settings
 
-def load_benchmarks(domain: str) -> dict[str, object]:
-    benchmark_dir = Path("benchmarks") / domain
+
+def load_benchmarks(domain: str, settings: Settings) -> dict[str, object]:
+    benchmark_dir = Path(settings.llmproxy_benchmarks_path) / domain
     manifest_path = benchmark_dir / "benchmark_manifest.json"
     records_path = benchmark_dir / "benchmark_records.jsonl"
     if not manifest_path.exists() or not records_path.exists():

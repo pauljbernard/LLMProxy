@@ -131,6 +131,6 @@ def test_continuous_improvement_flow_processes_outbox_and_reports_kpis() -> None
         session = get_session_factory()()
         try:
             assert session.execute(text("select count(*) from learner.dataset_import")).scalar_one() >= 1
-            assert session.execute(text("select count(*) from integration.model_performance_sample")).scalar_one() >= 1
+            assert session.execute(text("select count(*) from integration.job_queue where job_type = 'evaluation.run'")).scalar_one() >= 1
         finally:
             session.close()

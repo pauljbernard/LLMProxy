@@ -74,42 +74,123 @@ def _metric(
 
 
 def generate_kpi_report(session: Session, *, settings: Settings) -> KpiReportResponse:
-    samples = list(session.execute(select(ModelPerformanceSample)).scalars())
-    candidates = list(session.execute(select(TrainingCandidate)).scalars())
-    exports = list(session.execute(select(DatasetExport)).scalars())
-    imports = list(session.execute(select(DatasetImport)).scalars())
-    training_runs = list(session.execute(select(TrainingRun)).scalars())
-    evaluation_runs = list(session.execute(select(EvaluationRun)).scalars())
-    events = list(session.execute(select(IntegrationEvent)).scalars())
+    total_requests = int(session.execute(select(func.count()).select_from(ModelPerformanceSample)).scalar_one())
+    total_cost = float(session.execute(select(func.coalesce(func.sum(ModelPerformanceSample.cost_estimate), 0.0))).scalar_one())
+    successful_sample_count = int(
+        session.execute(
+            select(func.count()).select_from(ModelPerformanceSample).where(ModelPerformanceSample.successful.is_(True))
+        ).scalar_one()
+    )
+    successful_cost = float(
+        session.execute(
+            select(func.coalesce(func.sum(ModelPerformanceSample.cost_estimate), 0.0)).where(
+                ModelPerformanceSample.successful.is_(True)
+            )
+        ).scalar_one()
+    )
+    local_sample_count = int(
+        session.execute(
+            select(func.count()).select_from(ModelPerformanceSample).where(
+                (ModelPerformanceSample.route_type.startswith("local_"))
+                | (ModelPerformanceSample.route_type == "local_only")
+            )
+        ).scalar_one()
+    )
+    frontier_sample_count = int(
+        session.execute(
+            select(func.count()).select_from(ModelPerformanceSample).where(
+                (ModelPerformanceSample.route_type.startswith("frontier"))
+                | (ModelPerformanceSample.route_type == "fallback")
+            )
+        ).scalar_one()
+    )
+    shadow_sample_count = int(
+        session.execute(
+            select(func.count()).select_from(ModelPerformanceSample).where(ModelPerformanceSample.route_type == "shadow")
+        ).scalar_one()
+    )
+    frontier_cost_total = float(
+        session.execute(
+            select(func.coalesce(func.sum(ModelPerformanceSample.cost_estimate), 0.0)).where(
+                (ModelPerformanceSample.route_type.startswith("frontier"))
+                | (ModelPerformanceSample.route_type == "fallback")
+            )
+        ).scalar_one()
+    )
+    local_cost_total = float(
+        session.execute(
+            select(func.coalesce(func.sum(ModelPerformanceSample.cost_estimate), 0.0)).where(
+                (ModelPerformanceSample.route_type.startswith("local_"))
+                | (ModelPerformanceSample.route_type == "local_only")
+            )
+        ).scalar_one()
+    )
+    candidate_count = int(session.execute(select(func.count()).select_from(TrainingCandidate)).scalar_one())
+    approved_candidate_count = int(
+        session.execute(
+            select(func.count()).select_from(TrainingCandidate).where(TrainingCandidate.approval_status == "approved")
+        ).scalar_one()
+    )
+    reviewed_candidate_count = int(
+        session.execute(
+            select(func.count()).select_from(TrainingCandidate).where(TrainingCandidate.approval_status != "needs_review")
+        ).scalar_one()
+    )
+    import_count = int(session.execute(select(func.count()).select_from(DatasetImport)).scalar_one())
+    import_record_total = int(
+        session.execute(
+            select(func.coalesce(func.sum(DatasetImport.record_count + DatasetImport.quarantined_count), 0))
+        ).scalar_one()
+    )
+    quarantined_total = int(
+        session.execute(select(func.coalesce(func.sum(DatasetImport.quarantined_count), 0))).scalar_one()
+    )
+    export_record_total = int(
+        session.execute(select(func.coalesce(func.sum(DatasetExport.record_count), 0))).scalar_one()
+    )
+    training_run_count = int(session.execute(select(func.count()).select_from(TrainingRun)).scalar_one())
+    successful_training_runs = int(
+        session.execute(
+            select(func.count()).select_from(TrainingRun).where(TrainingRun.status == "completed")
+        ).scalar_one()
+    )
+    evaluation_run_count = int(session.execute(select(func.count()).select_from(EvaluationRun)).scalar_one())
+    approved_models = int(
+        session.execute(
+            select(func.count()).select_from(EvaluationRun).where(
+                EvaluationRun.promotion_status == "approved"
+            )
+        ).scalar_one()
+    )
+    rollback_events = int(
+        session.execute(
+            select(func.count()).select_from(IntegrationEvent).where(IntegrationEvent.event_type == "model.rolled_back")
+        ).scalar_one()
+    )
     latest_policy = session.execute(
         select(RoutingPolicyVersion).order_by(RoutingPolicyVersion.created_at.desc())
     ).scalars().first()
     policy_version = latest_policy.policy_version if latest_policy is not None else "none"
-
-    total_requests = len(samples)
-    total_cost = sum(sample.cost_estimate for sample in samples)
-    successful_samples = [sample for sample in samples if sample.successful]
-    successful_cost = sum(sample.cost_estimate for sample in successful_samples)
-    local_samples = [sample for sample in samples if sample.route_type.startswith("local_") or sample.route_type == "local_only"]
-    frontier_samples = [sample for sample in samples if sample.route_type.startswith("frontier") or sample.route_type == "fallback"]
-    shadow_samples = [sample for sample in samples if sample.route_type == "shadow"]
-    eligible_local_samples = [sample for sample in samples if sample.route_type != "shadow"]
-
-    successful_local_substitutions = [
-        sample
-        for sample in local_samples
-        if sample.quality_score is not None
-        and sample.quality_score >= frontier_baseline_score(sample.domain) - 0.05
-    ]
-    avoided_frontier_spend = sum(
-        frontier_baseline_cost(sample.domain) - sample.cost_estimate
-        for sample in successful_local_substitutions
-    )
-    approved_candidates = [candidate for candidate in candidates if candidate.approval_status == "approved"]
-    reviewed_candidates = [candidate for candidate in candidates if candidate.approval_status != "needs_review"]
-    successful_training_runs = [run for run in training_runs if run.status == "completed"]
-    approved_models = [run for run in evaluation_runs if str(run.result_json.get("promotion_status")) == "approved"]
-    rollback_events = [event for event in events if event.event_type == "model.rolled_back"]
+    eligible_local_samples = max(total_requests - shadow_sample_count, 0)
+    local_sample_rows = session.execute(
+        select(
+            ModelPerformanceSample.domain,
+            ModelPerformanceSample.quality_score,
+            ModelPerformanceSample.cost_estimate,
+        ).where(
+            (
+                (ModelPerformanceSample.route_type.startswith("local_"))
+                | (ModelPerformanceSample.route_type == "local_only")
+            ),
+            ModelPerformanceSample.quality_score.is_not(None),
+        )
+    ).all()
+    successful_local_substitution_count = 0
+    avoided_frontier_spend = 0.0
+    for domain, quality_score, cost_estimate in local_sample_rows:
+        if quality_score is not None and float(quality_score) >= frontier_baseline_score(str(domain), settings) - 0.05:
+            successful_local_substitution_count += 1
+            avoided_frontier_spend += frontier_baseline_cost(str(domain), settings) - float(cost_estimate)
 
     metrics = [
         _metric(
@@ -123,15 +204,15 @@ def generate_kpi_report(session: Session, *, settings: Settings) -> KpiReportRes
         _metric(
             time_window="all_time",
             name="average_cost_per_successful_request",
-            value=(successful_cost / len(successful_samples)) if successful_samples else 0.0,
+            value=(successful_cost / successful_sample_count) if successful_sample_count else 0.0,
             policy_version=policy_version,
-            sample_size=len(successful_samples),
+            sample_size=successful_sample_count,
             currency="USD",
         ),
         _metric(
             time_window="all_time",
             name="frontier_spend_per_100_requests",
-            value=(sum(sample.cost_estimate for sample in frontier_samples) / total_requests * 100) if total_requests else 0.0,
+            value=(frontier_cost_total / total_requests * 100) if total_requests else 0.0,
             policy_version=policy_version,
             sample_size=total_requests,
             currency="USD",
@@ -139,7 +220,7 @@ def generate_kpi_report(session: Session, *, settings: Settings) -> KpiReportRes
         _metric(
             time_window="all_time",
             name="local_spend_per_100_requests",
-            value=(sum(sample.cost_estimate for sample in local_samples) / total_requests * 100) if total_requests else 0.0,
+            value=(local_cost_total / total_requests * 100) if total_requests else 0.0,
             policy_version=policy_version,
             sample_size=total_requests,
             currency="USD",
@@ -155,83 +236,83 @@ def generate_kpi_report(session: Session, *, settings: Settings) -> KpiReportRes
         _metric(
             time_window="all_time",
             name="local_routing_rate",
-            value=(len(local_samples) / len(eligible_local_samples)) if eligible_local_samples else 0.0,
+            value=(local_sample_count / eligible_local_samples) if eligible_local_samples else 0.0,
             policy_version=policy_version,
-            sample_size=len(eligible_local_samples),
+            sample_size=eligible_local_samples,
         ),
         _metric(
             time_window="all_time",
             name="frontier_routing_rate",
-            value=(len(frontier_samples) / total_requests) if total_requests else 0.0,
+            value=(frontier_sample_count / total_requests) if total_requests else 0.0,
             policy_version=policy_version,
             sample_size=total_requests,
         ),
         _metric(
             time_window="all_time",
             name="frontier_to_local_substitution_rate",
-            value=(len(successful_local_substitutions) / len(eligible_local_samples)) if eligible_local_samples else 0.0,
+            value=(successful_local_substitution_count / eligible_local_samples) if eligible_local_samples else 0.0,
             policy_version=policy_version,
-            sample_size=len(eligible_local_samples),
+            sample_size=eligible_local_samples,
         ),
         _metric(
             time_window="all_time",
             name="avoided_frontier_spend",
             value=avoided_frontier_spend,
             policy_version=policy_version,
-            sample_size=len(successful_local_substitutions),
+            sample_size=successful_local_substitution_count,
             currency="USD",
             estimation_flag=True,
         ),
         _metric(
             time_window="all_time",
             name="training_candidate_capture_rate",
-            value=(len(candidates) / total_requests) if total_requests else 0.0,
+            value=(candidate_count / total_requests) if total_requests else 0.0,
             policy_version=policy_version,
             sample_size=total_requests,
         ),
         _metric(
             time_window="all_time",
             name="approval_rate",
-            value=(len(approved_candidates) / len(reviewed_candidates)) if reviewed_candidates else 0.0,
+            value=(approved_candidate_count / reviewed_candidate_count) if reviewed_candidate_count else 0.0,
             policy_version=policy_version,
-            sample_size=len(reviewed_candidates),
+            sample_size=reviewed_candidate_count,
         ),
         _metric(
             time_window="all_time",
             name="export_yield_rate",
-            value=(sum(export.record_count for export in exports) / len(approved_candidates)) if approved_candidates else 0.0,
+            value=(export_record_total / approved_candidate_count) if approved_candidate_count else 0.0,
             policy_version=policy_version,
-            sample_size=len(approved_candidates),
+            sample_size=approved_candidate_count,
         ),
         _metric(
             time_window="all_time",
             name="dataset_quarantine_rate",
-            value=(sum(dataset_import.quarantined_count for dataset_import in imports) / sum(dataset_import.record_count + dataset_import.quarantined_count for dataset_import in imports))
-            if imports and sum(dataset_import.record_count + dataset_import.quarantined_count for dataset_import in imports)
+            value=(quarantined_total / import_record_total)
+            if import_count and import_record_total
             else 0.0,
             policy_version=policy_version,
-            sample_size=len(imports),
+            sample_size=import_count,
         ),
         _metric(
             time_window="all_time",
             name="training_success_rate",
-            value=(len(successful_training_runs) / len(training_runs)) if training_runs else 0.0,
+            value=(successful_training_runs / training_run_count) if training_run_count else 0.0,
             policy_version=policy_version,
-            sample_size=len(training_runs),
+            sample_size=training_run_count,
         ),
         _metric(
             time_window="all_time",
             name="promotion_pass_rate",
-            value=(len(approved_models) / len(evaluation_runs)) if evaluation_runs else 0.0,
+            value=(approved_models / evaluation_run_count) if evaluation_run_count else 0.0,
             policy_version=policy_version,
-            sample_size=len(evaluation_runs),
+            sample_size=evaluation_run_count,
         ),
         _metric(
             time_window="all_time",
             name="rollback_rate",
-            value=(len(rollback_events) / len(approved_models)) if approved_models else 0.0,
+            value=(rollback_events / approved_models) if approved_models else 0.0,
             policy_version=policy_version,
-            sample_size=len(approved_models),
+            sample_size=approved_models,
         ),
     ]
 

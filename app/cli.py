@@ -34,7 +34,7 @@ from app.db.models import (
 )
 from app.db.session import get_engine, get_session_factory
 from app.deployment.manager import deploy_model, list_routing_policies, rollback_model
-from app.evaluation.runner import list_evaluation_runs, run_evaluation
+from app.evaluation.runner import create_evaluation_run, list_evaluation_runs, run_evaluation
 from app.integration.outbox import process_pending_events
 from app.integration.performance import generate_kpi_report
 from app.integration.routing_policy import get_latest_policy
@@ -468,7 +468,7 @@ def cmd_evaluation_run(args: argparse.Namespace) -> int:
         frontier_baseline_name=args.frontier_baseline_name,
     )
     with session_scope() as session:
-        response = run_evaluation(session, request=request, settings=settings)
+        response = create_evaluation_run(session, request=request, settings=settings)
     _json_print(response.model_dump(mode="json"))
     return 0
 
@@ -482,8 +482,9 @@ def cmd_evaluation_list(args: argparse.Namespace) -> int:
                 "training_run_id": run.training_run_id,
                 "domain": run.domain,
                 "frontier_baseline_name": run.frontier_baseline_name,
+                "status": run.status,
                 "overall_score": run.overall_score,
-                "promotion_status": run.result_json.get("promotion_status", "unknown"),
+                "promotion_status": run.promotion_status,
             }
             for run in runs
         ]

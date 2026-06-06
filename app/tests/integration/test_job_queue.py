@@ -1,5 +1,5 @@
 from app.config import Settings
-from app.integration.jobs import claim_next_job, enqueue_dataset_import_job, enqueue_kpi_report_job
+from app.integration.jobs import claim_next_job, enqueue_dataset_import_job, enqueue_evaluation_run_job, enqueue_kpi_report_job
 from app.integration.outbox import process_pending_events
 from app.runtime import run_worker_iteration
 
@@ -107,23 +107,30 @@ def test_process_pending_events_enqueues_dataset_import_job():
 
 
 def test_process_pending_events_enqueues_follow_on_jobs_for_phase8_events():
+    from app.integration import outbox as outbox_module
+
     event = type(
         "Event",
         (),
         {
-            "event_type": "evaluation.completed",
-            "payload_json": {"evaluation_run_id": "eval_1", "domain": "coding"},
+            "event_type": "training.completed",
+            "payload_json": {"training_run_id": "train_1", "domain": "coding"},
             "processed_at": None,
             "occurred_at": None,
         },
     )()
     session = FakeSession(events=[event])
 
+    original_create = outbox_module.create_evaluation_run
+    outbox_module.create_evaluation_run = lambda session, request, settings: session.add(
+        FakeJob(job_type="evaluation.run", payload_json={"evaluation_run_id": "eval_1"}, job_id="job_eval_1")
+    )
     result = process_pending_events(session, settings=Settings())
+    outbox_module.create_evaluation_run = original_create
 
     assert result.processed_count == 1
     assert result.imported_count == 0
-    assert {job.job_type for job in session.jobs} == {"kpi.generate", "performance.sample", "retraining.plan"}
+    assert {job.job_type for job in session.jobs} == {"kpi.generate", "evaluation.run"}
 
 
 def test_enqueue_kpi_report_job_creates_pending_job():
@@ -134,6 +141,16 @@ def test_enqueue_kpi_report_job_creates_pending_job():
     assert job.job_type == "kpi.generate"
     assert job.status == "pending"
     assert len(session.jobs) == 1
+
+
+def test_enqueue_evaluation_run_job_creates_pending_job() -> None:
+    session = FakeSession()
+
+    job = enqueue_evaluation_run_job(session, evaluation_run_id="eval_1")
+
+    assert job.job_type == "evaluation.run"
+    assert job.status == "pending"
+    assert job.payload_json["evaluation_run_id"] == "eval_1"
 
 
 def test_claim_next_job_marks_job_running():

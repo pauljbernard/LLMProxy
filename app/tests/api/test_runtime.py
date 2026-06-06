@@ -81,6 +81,48 @@ def test_run_worker_iteration_supports_additional_job_types() -> None:
         assert run_worker_iteration() is True
 
 
+def test_run_worker_iteration_processes_evaluation_jobs() -> None:
+    job = type(
+        "Job",
+        (),
+        {
+            "id": "job_1",
+            "job_type": "evaluation.run",
+            "payload_json": {"evaluation_run_id": "eval_1"},
+            "status": "pending",
+            "attempts": 0,
+            "max_attempts": 3,
+            "claimed_at": None,
+            "completed_at": None,
+            "last_error": None,
+        },
+    )()
+
+    class ClaimSession:
+        commit_count = 0
+
+        def commit(self) -> None:
+            self.commit_count += 1
+
+        def close(self) -> None:
+            return None
+
+        def rollback(self) -> None:
+            return None
+
+    claim_session = ClaimSession()
+
+    with patch("app.runtime.get_session_factory", return_value=lambda: claim_session):
+        with patch("app.runtime.claim_next_job_for_lane", return_value=job):
+            with patch("app.runtime.execute_evaluation_run") as execute_evaluation_run:
+                execute_evaluation_run.return_value = None
+                assert run_worker_iteration() is True
+
+    assert claim_session.commit_count == 1
+    _, kwargs = execute_evaluation_run.call_args
+    assert kwargs["evaluation_run_id"] == "eval_1"
+
+
 def test_run_worker_iteration_passes_job_lane_filters() -> None:
     fake_session = type(
         "FakeSession",
@@ -122,6 +164,74 @@ def test_run_worker_recovers_after_job_failure() -> None:
                             run_worker()
 
     assert run_iteration.call_count == 2
+
+
+def test_run_worker_iteration_marks_training_run_failed_in_retry_session() -> None:
+    job = type(
+        "Job",
+        (),
+        {
+            "id": "job_1",
+            "job_type": "training.run",
+            "payload_json": {"training_run_id": "train_1"},
+            "status": "running",
+            "attempts": 1,
+            "max_attempts": 3,
+            "claimed_at": None,
+            "completed_at": None,
+            "last_error": None,
+        },
+    )()
+    training_run = type(
+        "TrainingRun",
+        (),
+        {
+            "id": "train_1",
+            "status": "pending",
+            "metrics_json": {},
+        },
+    )()
+
+    class ClaimSession:
+        def commit(self) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+        def rollback(self) -> None:
+            return None
+
+    class RetrySession:
+        committed = False
+
+        def get(self, model, object_id):
+            if object_id == "job_1":
+                return job
+            if object_id == "train_1":
+                return training_run
+            return None
+
+        def commit(self) -> None:
+            self.committed = True
+
+        def close(self) -> None:
+            return None
+
+    claim_session = ClaimSession()
+    retry_session = RetrySession()
+    sessions = iter([claim_session, retry_session])
+
+    with patch("app.runtime.get_session_factory", return_value=lambda: next(sessions)):
+        with patch("app.runtime.claim_next_job_for_lane", return_value=job):
+            with patch("app.runtime.execute_training_run", side_effect=RuntimeError("trainer boom")):
+                with patch("app.runtime.log_record"):
+                    with pytest.raises(RuntimeError, match="trainer boom"):
+                        run_worker_iteration()
+
+    assert training_run.status == "failed"
+    assert training_run.metrics_json == {"error": "trainer boom"}
+    assert retry_session.committed is True
 
 
 def test_run_scheduler_recovers_after_iteration_failure() -> None:

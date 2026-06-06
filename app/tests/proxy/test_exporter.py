@@ -60,6 +60,7 @@ def test_export_candidates_writes_jsonl_and_manifest(tmp_path: Path) -> None:
     assert Path(response.data_path).exists()
     assert Path(response.manifest_path).exists()
     assert candidate.status == "exported"
+    assert candidate.export_eligible is False
     assert len(session.added) == 2
 
 
