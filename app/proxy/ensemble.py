@@ -120,7 +120,13 @@ async def run_teacher_ensemble(
     teacher_candidates = await session.run_sync(_persist_candidates)
 
     critique = judge_response(teacher_candidates, domain=request.metadata.domain_hint or "general")
-    winning_candidate = next(item for item in teacher_candidates if item.response_id == critique.selected_response_id)
+    winning_candidate = next(
+        (item for item in teacher_candidates if item.response_id == critique.selected_response_id),
+        None,
+    )
+    if winning_candidate is None:
+        raise RuntimeError("Judge selected a response ID that does not match any teacher candidate.")
+
     def _persist_judge(sync_session):
         record_judge_critique(
             sync_session,
