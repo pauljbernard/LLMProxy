@@ -229,6 +229,8 @@ def evaluation_run_payload(run: EvaluationRun) -> dict[str, Any]:
         "training_run_id": run.training_run_id,
         "domain": run.domain,
         "frontier_baseline_name": run.frontier_baseline_name,
+        "status": run.status,
+        "promotion_status": run.promotion_status,
         "overall_score": run.overall_score,
         "quality_delta_vs_frontier": run.quality_delta_vs_frontier,
         "value_per_dollar_gain_vs_frontier": run.value_per_dollar_gain_vs_frontier,

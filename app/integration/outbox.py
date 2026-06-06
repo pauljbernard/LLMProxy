@@ -12,10 +12,10 @@ from app.db.models import IntegrationEvent
 from app.integration.jobs import (
     enqueue_dataset_import_job,
     enqueue_kpi_report_job,
-    enqueue_performance_sampling_job,
-    enqueue_retraining_plan_job,
     has_completed_dataset_import,
 )
+from app.evaluation.runner import create_evaluation_run
+from app.schemas.evaluation import EvaluationRunRequest
 from app.schemas.integration import OutboxProcessResponse
 
 
@@ -41,16 +41,11 @@ def process_pending_events(session: Session, *, settings: Settings) -> OutboxPro
         elif event.event_type in {"dataset.imported", "training.completed", "evaluation.completed", "model.deployed", "routing.updated"}:
             payload = event.payload_json
             enqueue_kpi_report_job(session)
-            enqueue_performance_sampling_job(
-                session,
-                trigger_event_type=event.event_type,
-                payload=dict(payload),
-            )
-            if event.event_type in {"dataset.imported", "evaluation.completed", "routing.updated"}:
-                enqueue_retraining_plan_job(
+            if event.event_type == "training.completed":
+                create_evaluation_run(
                     session,
-                    trigger_event_type=event.event_type,
-                    payload=dict(payload),
+                    request=EvaluationRunRequest(training_run_id=str(payload["training_run_id"])),
+                    settings=settings,
                 )
         event.processed_at = datetime.now(timezone.utc)
         processed_count += 1

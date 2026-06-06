@@ -8,6 +8,15 @@ class EvaluationRunRequest(BaseModel):
     frontier_baseline_name: str | None = None
 
 
+class EvaluationEnqueueResponse(BaseModel):
+    job_id: str
+    evaluation_run_id: str
+    training_run_id: str
+    status: str
+    queued: bool = True
+    frontier_baseline_name: str | None = None
+
+
 class EvaluationResult(BaseModel):
     evaluation_run_id: str
     training_run_id: str
@@ -26,8 +35,9 @@ class EvaluationRunView(BaseModel):
     training_run_id: str
     domain: str
     frontier_baseline_name: str
-    overall_score: float
-    quality_delta_vs_frontier: float
-    value_per_dollar_gain_vs_frontier: float
-    promotion_status: str
-    package_manifest_path: str
+    status: str
+    overall_score: float | None
+    quality_delta_vs_frontier: float | None
+    value_per_dollar_gain_vs_frontier: float | None
+    promotion_status: str | None
+    package_manifest_path: str | None

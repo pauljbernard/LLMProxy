@@ -95,6 +95,19 @@ def enqueue_training_run_job(session: Session, *, training_run_id: str) -> JobQu
     )
 
 
+def enqueue_evaluation_run_job(
+    session: Session,
+    *,
+    evaluation_run_id: str,
+) -> JobQueueRecord:
+    return enqueue_job(
+        session,
+        job_type="evaluation.run",
+        payload={"evaluation_run_id": evaluation_run_id},
+        dedupe_key=("evaluation_run_id", evaluation_run_id),
+    )
+
+
 def enqueue_retraining_plan_job(
     session: Session,
     *,

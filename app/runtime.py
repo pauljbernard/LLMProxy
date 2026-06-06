@@ -9,13 +9,14 @@ from sqlalchemy import text
 import uvicorn
 
 from app.config import get_settings
-from app.db.models import JobQueueRecord
+from app.db.models import EvaluationRun, JobQueueRecord, TrainingRun
 from app.db.session import get_engine, get_session_factory
 from app.integration.improvement import build_retraining_plan, record_teacher_comparison_sample
 from app.integration.jobs import claim_next_job_for_lane, enqueue_kpi_report_job, mark_job_completed, mark_job_failed
 from app.integration.outbox import process_pending_events
 from app.integration.performance import generate_kpi_report
 from app.datasets.ingestion import import_dataset
+from app.evaluation.runner import execute_evaluation_run
 from app.schemas.dataset import DatasetImportRequest
 from app.services.observability import log_record
 from app.training.orchestrator import execute_training_run
@@ -164,6 +165,12 @@ def run_worker_iteration(
                 training_run_id=str(job.payload_json["training_run_id"]),
                 settings=settings,
             )
+        elif job.job_type == "evaluation.run":
+            execute_evaluation_run(
+                session,
+                evaluation_run_id=str(job.payload_json["evaluation_run_id"]),
+                settings=settings,
+            )
         else:
             raise RuntimeError(f"Unsupported job type: {job.job_type}")
 
@@ -183,6 +190,20 @@ def run_worker_iteration(
         retry_session = get_session_factory()()
         try:
             retry_job = retry_session.get(JobQueueRecord, job.id) if job is not None else None
+            retry_run_id = str(job.payload_json.get("training_run_id")) if job is not None and job.job_type == "training.run" else None
+            retry_run = retry_session.get(TrainingRun, retry_run_id) if retry_run_id else None
+            retry_evaluation_run_id = (
+                str(job.payload_json.get("evaluation_run_id"))
+                if job is not None and job.job_type == "evaluation.run"
+                else None
+            )
+            retry_evaluation_run = retry_session.get(EvaluationRun, retry_evaluation_run_id) if retry_evaluation_run_id else None
+            if retry_run is not None:
+                retry_run.status = "failed"
+                retry_run.metrics_json = {"error": str(exc)}
+            if retry_evaluation_run is not None:
+                retry_evaluation_run.status = "failed"
+                retry_evaluation_run.result_json = {"error": str(exc)}
             if retry_job is not None:
                 mark_job_failed(retry_job, error=str(exc))
                 retry_session.commit()

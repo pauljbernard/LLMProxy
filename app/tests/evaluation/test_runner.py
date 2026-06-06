@@ -11,6 +11,7 @@ class FakeSession:
         self.training_run = training_run
         self.dataset_version = dataset_version
         self.added: list[object] = []
+        self.commit_count = 0
 
     def get(self, model, object_id: str):
         if model is TrainingRun and object_id == self.training_run.id:
@@ -21,6 +22,9 @@ class FakeSession:
 
     def add(self, item: object) -> None:
         self.added.append(item)
+
+    def commit(self) -> None:
+        self.commit_count += 1
 
 
 def build_training_run() -> TrainingRun:

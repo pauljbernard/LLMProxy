@@ -85,9 +85,13 @@ def test_evaluation_run_persists_to_postgres() -> None:
             headers={"Authorization": "Bearer change-me"},
             json={"training_run_id": training_payload["training_run_id"]},
         )
-        assert evaluation_response.status_code == 200
+        assert evaluation_response.status_code == 202
         evaluation_payload = evaluation_response.json()
-        assert evaluation_payload["promotion_status"] == "approved"
+        assert evaluation_payload["queued"] is True
+
+        from app.runtime import run_worker_iteration
+
+        run_worker_iteration()
 
         local_models_response = client.get(
             "/models/local",
@@ -102,4 +106,5 @@ def test_evaluation_run_persists_to_postgres() -> None:
         finally:
             session.close()
 
-        assert Path(evaluation_payload["package_manifest_path"]).exists()
+        evaluation_runs = client.get("/evaluation/runs", headers={"Authorization": "Bearer change-me"}).json()
+        assert Path(evaluation_runs[0]["package_manifest_path"]).exists()

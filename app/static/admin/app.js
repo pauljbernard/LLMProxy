@@ -793,12 +793,12 @@ async function refreshEvaluations() {
   const host = $("#evaluation-table");
   host.innerHTML = "";
   host.appendChild(
-    makeTable(["Evaluation", "Domain", "Score", "Promotion", "Actions"], payload, (row) => {
+    makeTable(["Evaluation", "Domain", "Status", "Promotion", "Actions"], payload, (row) => {
       const tr = document.createElement("tr");
       tr.innerHTML = `
         <td><strong>${row.id}</strong><br/><span>${row.training_run_id}</span></td>
         <td>${row.domain || "-"}</td>
-        <td>${row.overall_score ?? "-"}</td>
+        <td>${statusBadge(row.status || "-")}</td>
         <td>${statusBadge(row.promotion_status || "-")}</td>
         <td></td>
       `;

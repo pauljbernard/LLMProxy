@@ -85,9 +85,6 @@ app/training/qlora_trainer.py
 app/training/checkpointing.py
 app/evaluation/runner.py
 app/evaluation/benchmark_loader.py
-app/evaluation/judge.py
-app/evaluation/code_validation.py
-app/evaluation/style_scoring.py
 app/evaluation/economics.py
 app/registry/model_registry.py
 app/registry/artifact_store.py

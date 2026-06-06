@@ -141,6 +141,7 @@ def export_candidates(
 
     for candidate in candidates:
         candidate.status = "exported"
+        candidate.export_eligible = False
 
     return DatasetExportResponse(
         dataset_export_id=dataset_export_id,
