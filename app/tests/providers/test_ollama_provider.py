@@ -49,3 +49,30 @@ def test_ollama_provider_normalizes_chat_response() -> None:
     assert result["input_tokens"] == 14
     assert result["output_tokens"] == 5
     assert result["cost_estimate"] == 0.0
+
+
+def test_ollama_provider_batches_embeddings_in_one_request() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/embed"
+        payload = json.loads(request.content.decode("utf-8"))
+        assert payload["model"] == "qwen2.5-coder:14b"
+        assert payload["input"] == ["hello world", "goodbye world"]
+        return httpx.Response(
+            200,
+            json={
+                "embeddings": [
+                    [0.1, 0.2, 0.3],
+                    [0.4, 0.5, 0.6],
+                ]
+            },
+        )
+
+    provider = OllamaProvider(
+        "qwen2.5-coder:14b",
+        base_url="http://localhost:11434",
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = asyncio.run(provider.embed(["hello world", "goodbye world"]))
+
+    assert result == [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]

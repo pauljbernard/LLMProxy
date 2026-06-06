@@ -14,6 +14,7 @@ Use this section when you want to install, operate, troubleshoot, and use the sy
 ## Core Workflows
 
 - [First Training Workflow](./guides/first-training-workflow.md)
+- [Backend Command Integration](./guides/backend-command-integration.md)
 - [Operations Monitoring](./guides/operations-monitoring.md)
 - [Troubleshooting](./guides/troubleshooting.md)
 

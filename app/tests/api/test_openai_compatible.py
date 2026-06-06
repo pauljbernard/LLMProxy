@@ -120,6 +120,31 @@ def test_embeddings_returns_provider_vectors(monkeypatch) -> None:
     assert payload["usage"]["prompt_tokens"] == 4
 
 
+def test_embeddings_rejects_mismatched_embedding_provider(monkeypatch) -> None:
+    from app.api import openai_compatible
+
+    ollama = OllamaProvider(
+        "qwen2.5-coder:14b",
+        base_url="http://localhost:11434",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"embeddings": [[0.1, 0.2, 0.3]]})
+        ),
+    )
+    monkeypatch.setattr(
+        openai_compatible,
+        "get_provider_registry",
+        lambda settings, session=None: {"ollama": ollama},
+    )
+    client = TestClient(app)
+    response = client.post(
+        "/v1/embeddings",
+        headers={"Authorization": "Bearer change-me"},
+        json={"model": "text-embedding-3-small", "input": "hello world"},
+    )
+
+    assert response.status_code == 501
+
+
 def test_chat_completions_routes_and_persists(monkeypatch) -> None:
     import httpx
 

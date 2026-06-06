@@ -81,18 +81,16 @@ class OllamaProvider(BaseProvider):
     ) -> list[list[float]]:
         del dimensions
         resolved_model = model or self.model_id
-        embeddings: list[list[float]] = []
         async with self._client(base_url=self.base_url) as client:
-            for text in texts:
-                response = await client.post(
-                    "/api/embed",
-                    json={"model": resolved_model, "input": text},
-                )
-                response.raise_for_status()
-                raw_response = response.json()
-                values = raw_response.get("embeddings") or raw_response.get("embedding") or []
-                if values and isinstance(values[0], list):
-                    embeddings.append([float(value) for value in values[0]])
-                else:
-                    embeddings.append([float(value) for value in values])
-        return embeddings
+            response = await client.post(
+                "/api/embed",
+                json={"model": resolved_model, "input": list(texts)},
+            )
+            response.raise_for_status()
+            raw_response = response.json()
+        values = raw_response.get("embeddings") or raw_response.get("embedding") or []
+        if values and isinstance(values[0], list):
+            return [[float(value) for value in vector] for vector in values]
+        if values:
+            return [[float(value) for value in values]]
+        return [[] for _ in texts]

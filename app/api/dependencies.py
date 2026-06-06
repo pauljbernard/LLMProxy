@@ -1,6 +1,6 @@
 """API dependencies."""
 
-from collections.abc import Generator
+from collections.abc import AsyncGenerator, Generator
 from dataclasses import dataclass
 
 from fastapi import Depends, HTTPException, status
@@ -58,7 +58,6 @@ def get_session() -> Generator[Session, None, None]:
     yield from get_db_session()
 
 
-async def get_async_session() -> AsyncSession:
+async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
     async for session in get_async_db_session():
-        return session
-    raise RuntimeError("Async session generator did not yield a session.")
+        yield session

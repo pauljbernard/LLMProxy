@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     llmproxy_database_wait_timeout_seconds: int = 30
     llmproxy_run_migrations_on_start: bool = True
     llmproxy_provider_timeout_seconds: float = 60.0
+    llmproxy_training_backend_timeout_seconds: int = 14400
+    llmproxy_evaluation_timeout_seconds: int = 3600
     llmproxy_default_route_model: str = "proxy-auto"
     llmproxy_bearer_token: str = "change-me"
     llmproxy_openai_api_key: str | None = None
@@ -45,6 +47,9 @@ class Settings(BaseSettings):
     llmproxy_azure_openai_model: str = "gpt-5.5"
     llmproxy_ollama_base_url: str = "http://localhost:11434"
     llmproxy_ollama_model: str = "qwen2.5-coder:14b"
+    llmproxy_lora_trainer_command: str | None = None
+    llmproxy_qlora_trainer_command: str | None = None
+    llmproxy_evaluation_command: str | None = None
     llmproxy_exports_path: str = "/data/exports"
     llmproxy_datasets_path: str = "/data/datasets"
     llmproxy_models_path: str = "/data/models"

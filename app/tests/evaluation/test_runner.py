@@ -65,6 +65,41 @@ def test_run_evaluation_blocks_until_real_backend_exists(tmp_path) -> None:
         raise AssertionError("Expected NotImplementedError for synthetic evaluation path")
 
 
+def test_run_evaluation_uses_configured_backend(monkeypatch, tmp_path: Path) -> None:
+    from app.evaluation import runner as evaluation_runner
+
+    session = FakeSession(build_training_run(), build_dataset_version())
+    settings = Settings(
+        llmproxy_models_path=str(tmp_path),
+        llmproxy_evaluation_command="fake-evaluator",
+    )
+
+    monkeypatch.setattr(
+        evaluation_runner,
+        "run_json_command",
+        lambda **kwargs: {
+            "overall_score": 0.94,
+            "package_metadata": {
+                "runtime_targets": ["ollama"],
+                "domains": ["coding"],
+                "task_types": ["code_review"],
+            },
+            "record_scores": {"coding-1": 0.95, "coding-2": 0.93},
+        },
+    )
+
+    result = run_evaluation(
+        session,
+        request=EvaluationRunRequest(training_run_id="train_1"),
+        settings=settings,
+    )
+
+    assert result.overall_score == 0.94
+    assert result.package_manifest_path.endswith("model-package.json")
+    assert result.result["backend_result"]["record_scores"]["coding-1"] == 0.95
+    assert len(session.added) >= 2
+
+
 def test_run_evaluation_rejects_missing_training_run(tmp_path: Path) -> None:
     session = FakeSession(build_training_run(), build_dataset_version())
     settings = Settings(llmproxy_models_path=str(tmp_path))

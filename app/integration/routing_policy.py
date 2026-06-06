@@ -12,12 +12,16 @@ from app.proxy.recorder import generate_prefixed_id
 EMPTY_POLICY: dict[str, object] = {"entries": []}
 
 
-def get_latest_policy(session: Session | None) -> dict[str, object]:
+def get_latest_policy_record(session: Session | None) -> RoutingPolicyVersion | None:
     if session is None or not hasattr(session, "execute"):
-        return dict(EMPTY_POLICY)
-    record = session.execute(
+        return None
+    return session.execute(
         select(RoutingPolicyVersion).order_by(RoutingPolicyVersion.created_at.desc())
     ).scalars().first()
+
+
+def get_latest_policy(session: Session | None) -> dict[str, object]:
+    record = get_latest_policy_record(session)
     if record is None:
         return dict(EMPTY_POLICY)
     return dict(record.policy_json)

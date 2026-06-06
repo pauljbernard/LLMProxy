@@ -39,6 +39,7 @@ Recommended starting points:
 - [Admin CLI](./docs/guides/admin-cli.md)
 - [Operations Monitoring](./docs/guides/operations-monitoring.md)
 - [First Training Workflow](./docs/guides/first-training-workflow.md)
+- [Backend Command Integration](./docs/guides/backend-command-integration.md)
 - [Troubleshooting](./docs/guides/troubleshooting.md)
 - [Configuration Reference](./docs/reference/configuration.md)
 - [API Usage](./docs/reference/api-usage.md)
