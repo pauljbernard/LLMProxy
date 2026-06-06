@@ -187,7 +187,7 @@ class BedrockProvider(BaseProvider):
                         "raw_chunk": raw_chunk,
                     }
                     asyncio.run_coroutine_threadsafe(queue.put(item), loop).result()
-            except BaseException as exc:  # pragma: no cover - propagated to async consumer
+            except Exception as exc:  # pragma: no cover - propagated to async consumer
                 asyncio.run_coroutine_threadsafe(queue.put(exc), loop).result()
             finally:
                 asyncio.run_coroutine_threadsafe(queue.put(sentinel), loop).result()

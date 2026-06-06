@@ -2,7 +2,7 @@ from unittest.mock import patch
 
 import pytest
 
-from app.runtime import parse_args, run_migrations, run_worker, run_worker_iteration
+from app.runtime import parse_args, run_migrations, run_scheduler, run_worker, run_worker_iteration
 
 
 def test_parse_args_accepts_api_role() -> None:
@@ -120,5 +120,25 @@ def test_run_worker_recovers_after_job_failure() -> None:
                     with patch("app.runtime.run_worker_iteration", side_effect=[RuntimeError("boom"), KeyboardInterrupt()]) as run_iteration:
                         with pytest.raises(KeyboardInterrupt):
                             run_worker()
+
+    assert run_iteration.call_count == 2
+
+
+def test_run_scheduler_recovers_after_iteration_failure() -> None:
+    settings = type(
+        "Settings",
+        (),
+        {
+            "llmproxy_database_wait_timeout_seconds": 1,
+        },
+    )()
+
+    with patch("app.runtime.get_settings", return_value=settings):
+        with patch("app.runtime.wait_for_database"):
+            with patch("app.runtime.time.sleep"):
+                with patch("app.runtime.log_record"):
+                    with patch("app.runtime.run_scheduler_iteration", side_effect=[RuntimeError("boom"), KeyboardInterrupt()]) as run_iteration:
+                        with pytest.raises(KeyboardInterrupt):
+                            run_scheduler()
 
     assert run_iteration.call_count == 2

@@ -1,5 +1,7 @@
 import asyncio
 
+import pytest
+
 from app.proxy.ensemble import run_teacher_ensemble
 from app.proxy.judge import judge_response
 from app.schemas.ensemble import JudgeCritiquePayload, TeacherCandidate
@@ -148,6 +150,44 @@ def test_run_teacher_ensemble_allows_empty_judge_scores(monkeypatch) -> None:
     )
 
     assert session.captured_quality_score is None
+
+
+def test_run_teacher_ensemble_raises_when_judge_selects_unknown_candidate(monkeypatch) -> None:
+    registry = {
+        "anthropic": _FakeProvider(provider_name="anthropic", model_id="claude-3-5-sonnet", content="Anthropic answer."),
+        "openai": _FakeProvider(provider_name="openai", model_id="gpt-5.5", content="OpenAI answer."),
+        "google": _FakeProvider(provider_name="google", model_id="gemini-2.5-pro", content="Google answer."),
+    }
+    session = _FakeAsyncSession()
+
+    monkeypatch.setattr("app.proxy.ensemble.get_provider_registry", lambda settings: registry)
+    monkeypatch.setattr("app.proxy.ensemble.record_model_response", _fake_record_model_response)
+    monkeypatch.setattr("app.proxy.ensemble.record_judge_critique", lambda *args, **kwargs: None)
+    monkeypatch.setattr("app.proxy.ensemble.capture_training_candidate", lambda *args, **kwargs: None)
+    monkeypatch.setattr("app.proxy.ensemble.log_record", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "app.proxy.ensemble.judge_response",
+        lambda candidates, domain: JudgeCritiquePayload(
+            judge_provider="rule_based_judge",
+            judge_model="heuristic-v1",
+            selected_response_id="resp_missing",
+            selected_provider="anthropic",
+            selected_model="claude-3-5-sonnet",
+            rationale="broken judge",
+            scores={candidate.response_id: candidate.score for candidate in candidates},
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="Judge selected a response ID that does not match any teacher candidate."):
+        asyncio.run(
+            run_teacher_ensemble(
+                request=_request(),
+                request_log_id="req_ensemble",
+                routing_decision_id="route_ensemble",
+                session=session,
+                settings=type("Settings", (), {})(),
+            )
+        )
 
 
 def _fake_record_model_response(sync_session, request_log_id, result, response_role="teacher_candidate"):

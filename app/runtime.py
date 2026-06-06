@@ -83,7 +83,17 @@ def run_scheduler() -> None:
     settings = get_settings()
     wait_for_database(settings.llmproxy_database_wait_timeout_seconds)
     while True:  # pragma: no cover - long-lived runtime role
-        run_scheduler_iteration()
+        try:
+            run_scheduler_iteration()
+        except Exception as exc:
+            log_record(
+                settings,
+                level="ERROR",
+                component="runtime.scheduler",
+                category="error",
+                message="Scheduler loop recovered from iteration failure",
+                data={"error": str(exc)},
+            )
         time.sleep(60)
 
 
