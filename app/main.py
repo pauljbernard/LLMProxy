@@ -13,6 +13,7 @@ from app.api.proxy_native import router as proxy_router
 from app.api.training import router as training_router
 from app.db.session import get_session_factory
 from app.services.observability import build_operations_summary
+from app.services.provider_health import provider_health_snapshot
 
 
 def create_app() -> FastAPI:
@@ -64,6 +65,7 @@ def create_app() -> FastAPI:
                 "recent_audit_count": 0,
                 "latest_request_id": None,
                 "latest_evaluation_run_id": None,
+                "provider_health": provider_health_snapshot(),
                 "provider_configuration": {
                     "openai": bool(settings.llmproxy_openai_api_key),
                     "anthropic": bool(settings.llmproxy_anthropic_api_key),

@@ -1,5 +1,11 @@
 from app.config import Settings
-from app.integration.jobs import claim_next_job, enqueue_dataset_import_job, enqueue_evaluation_run_job, enqueue_kpi_report_job
+from app.integration.jobs import (
+    claim_next_job,
+    enqueue_dataset_import_job,
+    enqueue_deployment_activation_job,
+    enqueue_evaluation_run_job,
+    enqueue_kpi_report_job,
+)
 from app.integration.outbox import process_pending_events
 from app.runtime import run_worker_iteration
 
@@ -151,6 +157,54 @@ def test_enqueue_evaluation_run_job_creates_pending_job() -> None:
     assert job.job_type == "evaluation.run"
     assert job.status == "pending"
     assert job.payload_json["evaluation_run_id"] == "eval_1"
+
+
+def test_enqueue_deployment_activation_job_creates_pending_job() -> None:
+    session = FakeSession()
+
+    job = enqueue_deployment_activation_job(
+        session,
+        model_alias="coding-lora-v1",
+        deployment_mode="production",
+        domains=["coding"],
+        task_types=["code_review"],
+    )
+
+    assert job.job_type == "deployment.activate"
+    assert job.status == "pending"
+    assert job.payload_json["model_alias"] == "coding-lora-v1"
+
+
+def test_process_pending_events_enqueues_auto_deploy_for_approved_evaluation() -> None:
+    event = type(
+        "Event",
+        (),
+        {
+            "event_type": "evaluation.completed",
+            "payload_json": {
+                "evaluation_run_id": "eval_1",
+                "training_run_id": "train_1",
+                "model_alias": "coding-lora-v1",
+                "domains": ["coding"],
+                "task_types": ["code_review"],
+                "promotion_status": "approved",
+            },
+            "processed_at": None,
+            "occurred_at": None,
+        },
+    )()
+    session = FakeSession(events=[event])
+
+    result = process_pending_events(
+        session,
+        settings=Settings(
+            llmproxy_auto_deploy_approved_evaluations=True,
+            llmproxy_auto_deploy_deployment_mode="production",
+        ),
+    )
+
+    assert result.processed_count == 1
+    assert {job.job_type for job in session.jobs} == {"kpi.generate", "deployment.activate"}
 
 
 def test_claim_next_job_marks_job_running():

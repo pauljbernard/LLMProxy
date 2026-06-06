@@ -23,3 +23,4 @@ def test_metrics() -> None:
     payload = response.json()
     assert "job_counts" in payload
     assert "event_counts" in payload
+    assert "provider_health" in payload

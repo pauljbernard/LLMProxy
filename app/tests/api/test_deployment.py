@@ -105,3 +105,76 @@ def test_rollback_returns_response(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert response.json()["status"] == "rolled_back"
+
+
+def test_upsert_frontier_policy_entry_returns_response(monkeypatch) -> None:
+    from app.api import deployment as deployment_api
+    from app.api.dependencies import get_runtime_settings, get_session
+    from app.config import Settings
+
+    class FakeSession:
+        def commit(self) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        deployment_api,
+        "upsert_frontier_policy_entry",
+        lambda session, request: ("rpentry_1", "rpol_9"),
+    )
+
+    app.dependency_overrides[get_runtime_settings] = lambda: Settings()
+    app.dependency_overrides[get_session] = lambda: FakeSession()
+    client = TestClient(app)
+    response = client.post(
+        "/deployment/routing-policies/frontier",
+        headers={"Authorization": "Bearer change-me"},
+        json={
+            "provider_key": "openai",
+            "model_id": "gpt-5.5",
+            "domains": ["general"],
+            "deployment_mode": "production",
+        },
+    )
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["entry_id"] == "rpentry_1"
+    assert payload["policy_version"] == "rpol_9"
+
+
+def test_delete_policy_entry_returns_response(monkeypatch) -> None:
+    from app.api import deployment as deployment_api
+    from app.api.dependencies import get_runtime_settings, get_session
+    from app.config import Settings
+
+    class FakeSession:
+        def commit(self) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        deployment_api,
+        "delete_policy_entry",
+        lambda session, entry_id: "rpol_10",
+    )
+
+    app.dependency_overrides[get_runtime_settings] = lambda: Settings()
+    app.dependency_overrides[get_session] = lambda: FakeSession()
+    client = TestClient(app)
+    response = client.delete(
+        "/deployment/routing-policies/entries/rpentry_1",
+        headers={"Authorization": "Bearer change-me"},
+    )
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["entry_id"] == "rpentry_1"
+    assert payload["policy_version"] == "rpol_10"
+    assert payload["action"] == "deleted"

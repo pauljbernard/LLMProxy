@@ -108,6 +108,30 @@ def enqueue_evaluation_run_job(
     )
 
 
+def enqueue_deployment_activation_job(
+    session: Session,
+    *,
+    model_alias: str,
+    deployment_mode: str,
+    domains: list[str] | None = None,
+    task_types: list[str] | None = None,
+) -> JobQueueRecord:
+    payload: dict[str, object] = {
+        "model_alias": model_alias,
+        "deployment_mode": deployment_mode,
+    }
+    if domains is not None:
+        payload["domains"] = domains
+    if task_types is not None:
+        payload["task_types"] = task_types
+    return enqueue_job(
+        session,
+        job_type="deployment.activate",
+        payload=payload,
+        dedupe_key=("model_alias", model_alias),
+    )
+
+
 def enqueue_retraining_plan_job(
     session: Session,
     *,

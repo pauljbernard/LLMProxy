@@ -100,5 +100,46 @@ def test_google_provider_streams_generate_content_chunks() -> None:
     assert chunks[-1]["output_tokens"] == 2
 
 
+def test_google_provider_maps_supported_generation_parameters() -> None:
+    request = ChatCompletionRequest.model_validate(
+        {
+            "model": "proxy-auto",
+            "messages": [{"role": "user", "content": "Return JSON."}],
+            "top_p": 0.8,
+            "n": 2,
+            "seed": 9,
+            "stop": ["DONE"],
+            "response_format": {"type": "json_object"},
+            "metadata": {"session_id": "sess_google"},
+        }
+    )
+
+    def handler(request_http: httpx.Request) -> httpx.Response:
+        payload = json.loads(request_http.content.decode("utf-8"))
+        assert payload["generationConfig"]["topP"] == 0.8
+        assert payload["generationConfig"]["candidateCount"] == 2
+        assert payload["generationConfig"]["seed"] == 9
+        assert payload["generationConfig"]["stopSequences"] == ["DONE"]
+        assert payload["generationConfig"]["responseMimeType"] == "application/json"
+        return httpx.Response(
+            200,
+            json={
+                "candidates": [{"content": {"parts": [{"text": "{}"}]}, "finishReason": "STOP"}],
+                "usageMetadata": {"promptTokenCount": 3, "candidatesTokenCount": 1, "totalTokenCount": 4},
+                "modelVersion": "gemini-2.5-pro",
+            },
+        )
+
+    provider = GoogleProvider(
+        "gemini-2.5-pro",
+        api_key="test-google-key",
+        base_url="https://generativelanguage.googleapis.com/v1beta",
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = asyncio.run(provider.invoke(request))
+    assert result["content"] == "{}"
+
+
 async def _collect(stream) -> list[dict[str, object]]:
     return [chunk async for chunk in stream]

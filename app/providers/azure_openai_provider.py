@@ -5,6 +5,7 @@ import json
 
 from app.config import Settings
 from app.providers.base import BaseProvider
+from app.providers.openai_provider import OpenAIProvider
 from app.schemas.chat import ChatCompletionRequest
 
 
@@ -13,6 +14,7 @@ class AzureOpenAIProvider(BaseProvider):
     provider_name = "azure_openai"
     price_per_token = 0.000021
     supports_streaming = True
+    supports_tools = True
 
     def __init__(
         self,
@@ -41,31 +43,23 @@ class AzureOpenAIProvider(BaseProvider):
         )
 
     @staticmethod
-    def _request_messages(messages: Sequence[object]) -> list[dict[str, str]]:
-        payload: list[dict[str, str]] = []
-        for message in messages:
-            payload.append(
-                {
-                    "role": str(getattr(message, "role", "user")),
-                    "content": str(getattr(message, "content", "")),
-                }
-            )
-        return payload
+    def _request_messages(messages: Sequence[object]) -> list[dict[str, object]]:
+        return OpenAIProvider._request_messages(messages)
 
     async def chat(self, request: ChatCompletionRequest) -> dict[str, object]:
         api_key = self._require_config(self.api_key, field_name="llmproxy_azure_openai_api_key")
         endpoint = self._require_config(self.endpoint, field_name="llmproxy_azure_openai_endpoint")
-        payload = {
-            "messages": self._request_messages(request.messages),
-            "temperature": request.temperature,
-            "max_tokens": request.max_tokens,
-            "stream": False,
-        }
+        payload = OpenAIProvider._request_payload(request, model_id=self.model_id, stream=False)
+        payload.pop("model", None)
         headers = {
             "api-key": api_key,
             "Content-Type": "application/json",
         }
-        async with self._client(base_url=endpoint, headers=headers) as client:
+        async with self._client(
+            base_url=endpoint,
+            headers=headers,
+            timeout_seconds=self._timeout_for_request(request),
+        ) as client:
             response = await client.post(
                 f"/openai/deployments/{self.model_id}/chat/completions",
                 params={"api-version": self.api_version},
@@ -83,6 +77,7 @@ class AzureOpenAIProvider(BaseProvider):
         return {
             "model": str(raw_response.get("model", self.model_id)),
             "content": str(message.get("content", "")),
+            "tool_calls": OpenAIProvider._extract_tool_calls(message),
             "input_tokens": prompt_tokens,
             "output_tokens": completion_tokens,
             "finish_reason": str(choice.get("finish_reason", "stop")),
@@ -93,18 +88,17 @@ class AzureOpenAIProvider(BaseProvider):
     async def stream_chat(self, request: ChatCompletionRequest) -> AsyncIterator[dict[str, object]]:
         api_key = self._require_config(self.api_key, field_name="llmproxy_azure_openai_api_key")
         endpoint = self._require_config(self.endpoint, field_name="llmproxy_azure_openai_endpoint")
-        payload = {
-            "messages": self._request_messages(request.messages),
-            "temperature": request.temperature,
-            "max_tokens": request.max_tokens,
-            "stream": True,
-            "stream_options": {"include_usage": True},
-        }
+        payload = OpenAIProvider._request_payload(request, model_id=self.model_id, stream=True)
+        payload.pop("model", None)
         headers = {
             "api-key": api_key,
             "Content-Type": "application/json",
         }
-        async with self._client(base_url=endpoint, headers=headers) as client:
+        async with self._client(
+            base_url=endpoint,
+            headers=headers,
+            timeout_seconds=self._timeout_for_request(request),
+        ) as client:
             async with client.stream(
                 "POST",
                 f"/openai/deployments/{self.model_id}/chat/completions",
@@ -125,6 +119,7 @@ class AzureOpenAIProvider(BaseProvider):
                     yield {
                         "model": str(raw_chunk.get("model", self.model_id)),
                         "delta": str(delta.get("content", "")),
+                        "tool_calls": OpenAIProvider._extract_tool_calls(delta),
                         "finish_reason": choice.get("finish_reason"),
                         "input_tokens": int(usage.get("prompt_tokens", 0)),
                         "output_tokens": int(usage.get("completion_tokens", 0)),

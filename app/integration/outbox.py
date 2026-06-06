@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.config import Settings
 from app.db.models import IntegrationEvent
 from app.integration.jobs import (
+    enqueue_deployment_activation_job,
     enqueue_dataset_import_job,
     enqueue_kpi_report_job,
     has_completed_dataset_import,
@@ -46,6 +47,19 @@ def process_pending_events(session: Session, *, settings: Settings) -> OutboxPro
                     session,
                     request=EvaluationRunRequest(training_run_id=str(payload["training_run_id"])),
                     settings=settings,
+                )
+            if (
+                event.event_type == "evaluation.completed"
+                and settings.llmproxy_auto_deploy_approved_evaluations
+                and str(payload.get("promotion_status")) == "approved"
+                and payload.get("model_alias")
+            ):
+                enqueue_deployment_activation_job(
+                    session,
+                    model_alias=str(payload["model_alias"]),
+                    deployment_mode=settings.llmproxy_auto_deploy_deployment_mode,
+                    domains=[str(item) for item in payload.get("domains", [])],
+                    task_types=[str(item) for item in payload.get("task_types", [])],
                 )
         event.processed_at = datetime.now(timezone.utc)
         processed_count += 1
