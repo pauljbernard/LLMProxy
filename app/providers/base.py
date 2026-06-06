@@ -20,6 +20,7 @@ class BaseProvider(ABC):
     model_id: str
     supports_streaming: bool = False
     supports_embeddings: bool = False
+    supports_tools: bool = False
 
     def __init__(
         self,
@@ -40,14 +41,23 @@ class BaseProvider(ABC):
             model_id=self.model_id,
             supports_streaming=self.supports_streaming,
             supports_embeddings=self.supports_embeddings,
-            supports_tools=False,
+            supports_tools=self.supports_tools,
             max_context_tokens=128_000,
             max_output_tokens=8_192,
         )
 
     @staticmethod
     def _join_messages(messages: Sequence[object]) -> str:
-        return " ".join(getattr(message, "content", "") for message in messages).strip()
+        parts: list[str] = []
+        for message in messages:
+            content = getattr(message, "content", "")
+            if isinstance(content, str):
+                parts.append(content)
+            elif isinstance(content, list):
+                for item in content:
+                    if isinstance(item, dict) and isinstance(item.get("text"), str):
+                        parts.append(item["text"])
+        return " ".join(parts).strip()
 
     @staticmethod
     def _usage(content: str, completion: str) -> tuple[int, int]:
@@ -73,13 +83,24 @@ class BaseProvider(ABC):
             },
         }
 
-    def _client(self, *, base_url: str, headers: dict[str, str] | None = None) -> httpx.AsyncClient:
+    def _client(
+        self,
+        *,
+        base_url: str,
+        headers: dict[str, str] | None = None,
+        timeout_seconds: float | None = None,
+    ) -> httpx.AsyncClient:
         return httpx.AsyncClient(
             base_url=base_url.rstrip("/"),
             headers=headers,
-            timeout=self.timeout_seconds,
+            timeout=timeout_seconds if timeout_seconds is not None else self.timeout_seconds,
             transport=self._transport,
         )
+
+    def _timeout_for_request(self, request: ChatCompletionRequest) -> float:
+        if request.timeout_seconds is None:
+            return self.timeout_seconds
+        return float(request.timeout_seconds)
 
     def _require_config(self, value: str | None, *, field_name: str) -> str:
         if value:

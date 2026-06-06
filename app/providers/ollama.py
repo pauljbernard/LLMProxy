@@ -35,28 +35,41 @@ class OllamaProvider(BaseProvider):
         )
 
     @staticmethod
-    def _request_messages(messages: Sequence[object]) -> list[dict[str, str]]:
-        payload: list[dict[str, str]] = []
+    def _request_messages(messages: Sequence[object]) -> list[dict[str, object]]:
+        payload: list[dict[str, object]] = []
         for message in messages:
             payload.append(
                 {
                     "role": str(getattr(message, "role", "user")),
-                    "content": str(getattr(message, "content", "")),
+                    "content": getattr(message, "content", ""),
                 }
             )
         return payload
+
+    @staticmethod
+    def _options(request: ChatCompletionRequest) -> dict[str, object]:
+        options: dict[str, object] = {
+            "temperature": request.temperature,
+            "num_predict": request.max_tokens,
+        }
+        if request.top_p is not None:
+            options["top_p"] = request.top_p
+        if request.seed is not None:
+            options["seed"] = request.seed
+        if request.stop is not None:
+            options["stop"] = [request.stop] if isinstance(request.stop, str) else request.stop
+        return options
 
     async def chat(self, request: ChatCompletionRequest) -> dict[str, object]:
         payload = {
             "model": self.model_id,
             "messages": self._request_messages(request.messages),
             "stream": False,
-            "options": {
-                "temperature": request.temperature,
-                "num_predict": request.max_tokens,
-            },
+            "options": self._options(request),
         }
-        async with self._client(base_url=self.base_url) as client:
+        if request.response_format is not None and request.response_format.type == "json_object":
+            payload["format"] = "json"
+        async with self._client(base_url=self.base_url, timeout_seconds=self._timeout_for_request(request)) as client:
             response = await client.post("/api/chat", json=payload)
             response.raise_for_status()
             raw_response = response.json()
@@ -79,12 +92,11 @@ class OllamaProvider(BaseProvider):
             "model": self.model_id,
             "messages": self._request_messages(request.messages),
             "stream": True,
-            "options": {
-                "temperature": request.temperature,
-                "num_predict": request.max_tokens,
-            },
+            "options": self._options(request),
         }
-        async with self._client(base_url=self.base_url) as client:
+        if request.response_format is not None and request.response_format.type == "json_object":
+            payload["format"] = "json"
+        async with self._client(base_url=self.base_url, timeout_seconds=self._timeout_for_request(request)) as client:
             async with client.stream("POST", "/api/chat", json=payload) as response:
                 response.raise_for_status()
                 async for line in response.aiter_lines():

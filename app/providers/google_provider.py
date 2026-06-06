@@ -14,6 +14,18 @@ class GoogleProvider(BaseProvider):
     price_per_token = 0.000018
     supports_streaming = True
 
+    @staticmethod
+    def _request_parts(content: object) -> list[dict[str, object]]:
+        if isinstance(content, str):
+            return [{"text": content}]
+        if isinstance(content, list):
+            parts: list[dict[str, object]] = []
+            for item in content:
+                if isinstance(item, dict):
+                    parts.append(item)
+            return parts
+        return [{"text": ""}]
+
     def __init__(
         self,
         model_id: str,
@@ -46,10 +58,28 @@ class GoogleProvider(BaseProvider):
             payload.append(
                 {
                     "role": mapped_role,
-                    "parts": [{"text": str(getattr(message, "content", ""))}],
+                    "parts": GoogleProvider._request_parts(getattr(message, "content", "")),
                 }
             )
         return payload
+
+    @staticmethod
+    def _generation_config(request: ChatCompletionRequest) -> dict[str, object]:
+        config: dict[str, object] = {
+            "temperature": request.temperature,
+            "maxOutputTokens": request.max_tokens,
+        }
+        if request.top_p is not None:
+            config["topP"] = request.top_p
+        if request.n is not None:
+            config["candidateCount"] = request.n
+        if request.seed is not None:
+            config["seed"] = request.seed
+        if request.stop is not None:
+            config["stopSequences"] = [request.stop] if isinstance(request.stop, str) else request.stop
+        if request.response_format is not None and request.response_format.type == "json_object":
+            config["responseMimeType"] = "application/json"
+        return config
 
     @staticmethod
     def _extract_content(candidate: object) -> str:
@@ -71,12 +101,9 @@ class GoogleProvider(BaseProvider):
         api_key = self._require_config(self.api_key, field_name="llmproxy_google_api_key")
         payload = {
             "contents": self._request_contents(request.messages),
-            "generationConfig": {
-                "temperature": request.temperature,
-                "maxOutputTokens": request.max_tokens,
-            },
+            "generationConfig": self._generation_config(request),
         }
-        async with self._client(base_url=self.base_url) as client:
+        async with self._client(base_url=self.base_url, timeout_seconds=self._timeout_for_request(request)) as client:
             response = await client.post(
                 f"/models/{self.model_id}:generateContent",
                 params={"key": api_key},
@@ -104,12 +131,9 @@ class GoogleProvider(BaseProvider):
         api_key = self._require_config(self.api_key, field_name="llmproxy_google_api_key")
         payload = {
             "contents": self._request_contents(request.messages),
-            "generationConfig": {
-                "temperature": request.temperature,
-                "maxOutputTokens": request.max_tokens,
-            },
+            "generationConfig": self._generation_config(request),
         }
-        async with self._client(base_url=self.base_url) as client:
+        async with self._client(base_url=self.base_url, timeout_seconds=self._timeout_for_request(request)) as client:
             async with client.stream(
                 "POST",
                 f"/models/{self.model_id}:streamGenerateContent",

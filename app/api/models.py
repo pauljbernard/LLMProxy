@@ -4,7 +4,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends
 
-from app.api.dependencies import get_runtime_settings, require_api_token
+from app.api.dependencies import AuthPrincipal, get_runtime_settings, require_api_token
 from app.config import Settings
 from app.registry.artifact_store import list_model_packages
 from app.registry.model_registry import list_provider_capabilities
@@ -14,18 +14,22 @@ from app.schemas.registry import ModelPackageView
 router = APIRouter(prefix="/models", tags=["models"])
 
 
-@router.get("", response_model=list[ProviderCapability], dependencies=[Depends(require_api_token)])
+@router.get("", response_model=list[ProviderCapability])
 def list_registered_models(
     settings: Settings = Depends(get_runtime_settings),
+    principal: AuthPrincipal = Depends(require_api_token),
 ) -> list[ProviderCapability]:
-    return list_provider_capabilities(settings)
+    allowed_models = set(principal.models_allowed) if principal.models_allowed else None
+    return list_provider_capabilities(settings, allowed_models=allowed_models)
 
 
-@router.get("/local", response_model=list[ModelPackageView], dependencies=[Depends(require_api_token)])
+@router.get("/local", response_model=list[ModelPackageView])
 def list_local_model_packages(
     settings: Settings = Depends(get_runtime_settings),
+    principal: AuthPrincipal = Depends(require_api_token),
 ) -> list[ModelPackageView]:
     manifests = list_model_packages(Path(settings.llmproxy_models_path))
+    allowed_models = set(principal.models_allowed) if principal.models_allowed else None
     return [
         ModelPackageView(
             model_registry_id=str(manifest["model_registry_id"]),
@@ -37,4 +41,5 @@ def list_local_model_packages(
             promotion_status=str(manifest["quality_summary"]["promotion_status"]),
         )
         for manifest in manifests
+        if allowed_models is None or str(manifest["model_alias"]) in allowed_models
     ]

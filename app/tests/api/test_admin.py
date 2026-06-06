@@ -1,9 +1,13 @@
 from contextlib import contextmanager
+from datetime import datetime, timezone
+from decimal import Decimal
 
 from fastapi.testclient import TestClient
 
 from app.api import admin
+from app.api.dependencies import virtual_key_hash
 from app.config import Settings
+from app.db.models import VirtualAPIKey
 from app.main import app
 
 
@@ -45,6 +49,102 @@ def test_admin_config_returns_payload() -> None:
     payload = response.json()
     assert payload["llmproxy_openai_model"] == "gpt-5.5"
     assert "llmproxy_logs_path" in payload
+
+
+def test_admin_virtual_keys_create_list_and_disable() -> None:
+    created: list[VirtualAPIKey] = []
+
+    class FakeScalarResult:
+        def __init__(self, items):
+            self.items = items
+
+        def all(self):
+            return self.items
+
+    class FakeExecuteResult:
+        def __init__(self, items):
+            self.items = items
+
+        def scalars(self):
+            return FakeScalarResult(self.items)
+
+    class FakeSession:
+        def add(self, item):
+            if item.status is None:
+                item.status = "active"
+            if item.spend_usd is None:
+                item.spend_usd = Decimal("0")
+            created.append(item)
+
+        def commit(self):
+            return None
+
+        def refresh(self, item):
+            if item.created_at is None:
+                item.created_at = datetime.now(timezone.utc)
+
+        def execute(self, statement):
+            return FakeExecuteResult(created)
+
+        def get(self, model, key):
+            for item in created:
+                if item.id == key:
+                    return item
+            return None
+
+    def fake_session():
+        yield FakeSession()
+
+    app.dependency_overrides[admin.get_session] = fake_session
+    client = TestClient(app)
+    create_response = client.post(
+        "/admin/api/auth/virtual-keys",
+        headers={"Authorization": "Bearer change-me"},
+        json={
+            "display_name": "Team A",
+            "owner_id": "team_a",
+            "models_allowed": ["gpt-5.5", "proxy-auto"],
+            "max_budget_usd": 25.0,
+        },
+    )
+    assert create_response.status_code == 200
+    created_payload = create_response.json()
+    assert created_payload["token"].startswith("sk-")
+    assert created_payload["models_allowed"] == ["gpt-5.5", "proxy-auto"]
+    assert created[0].key_hash == virtual_key_hash(created_payload["token"])
+
+    list_response = client.get(
+        "/admin/api/auth/virtual-keys",
+        headers={"Authorization": "Bearer change-me"},
+    )
+    assert list_response.status_code == 200
+    assert list_response.json()[0]["id"] == created_payload["id"]
+
+    disable_response = client.post(
+        f"/admin/api/auth/virtual-keys/{created_payload['id']}/disable",
+        headers={"Authorization": "Bearer change-me"},
+    )
+    assert disable_response.status_code == 200
+    assert disable_response.json()["status"] == "disabled"
+
+    update_response = client.patch(
+        f"/admin/api/auth/virtual-keys/{created_payload['id']}",
+        headers={"Authorization": "Bearer change-me"},
+        json={"models_allowed": ["proxy-auto"], "max_budget_usd": 50.0, "display_name": "Team A Updated"},
+    )
+    assert update_response.status_code == 200
+    assert update_response.json()["models_allowed"] == ["proxy-auto"]
+    assert update_response.json()["display_name"] == "Team A Updated"
+
+    rotate_response = client.post(
+        f"/admin/api/auth/virtual-keys/{created_payload['id']}/rotate",
+        headers={"Authorization": "Bearer change-me"},
+    )
+    app.dependency_overrides.clear()
+    assert rotate_response.status_code == 200
+    rotated = rotate_response.json()
+    assert rotated["token"].startswith("sk-")
+    assert rotated["previous_key_prefix"] == created_payload["key_prefix"]
 
 
 def test_admin_ops_live_returns_summary_and_logs(monkeypatch) -> None:
@@ -91,6 +191,10 @@ def test_admin_ops_live_returns_summary_and_logs(monkeypatch) -> None:
             "recent_stream_summaries": [{"component": "proxy.shadow", "provider": "ollama", "chunk_count": 4}],
         },
     )
+    monkeypatch.setattr(
+        "app.services.observability.provider_health_snapshot",
+        lambda: {"openai": {"consecutive_failures": 2, "cooled_down": True, "cooldown_remaining_seconds": 30.0}},
+    )
     app.dependency_overrides[admin.get_session] = fake_session
     client = TestClient(app)
     response = client.get("/admin/api/ops/live", headers={"Authorization": "Bearer change-me"})
@@ -100,6 +204,7 @@ def test_admin_ops_live_returns_summary_and_logs(monkeypatch) -> None:
     assert "summary" in payload
     assert payload["logs"][0]["message"] == "ok"
     assert payload["summary"]["streaming"]["stream_complete_count"] == 1
+    assert payload["summary"]["provider_health"]["openai"]["cooled_down"] is True
 
 
 def test_admin_streaming_support_returns_capabilities(monkeypatch) -> None:

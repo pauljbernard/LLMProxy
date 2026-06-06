@@ -44,6 +44,8 @@ def settings_payload(settings: Settings) -> dict[str, Any]:
         "llmproxy_checkpoints_path": settings.llmproxy_checkpoints_path,
         "llmproxy_reports_path": settings.llmproxy_reports_path,
         "llmproxy_logs_path": settings.llmproxy_logs_path,
+        "llmproxy_auto_deploy_approved_evaluations": settings.llmproxy_auto_deploy_approved_evaluations,
+        "llmproxy_auto_deploy_deployment_mode": settings.llmproxy_auto_deploy_deployment_mode,
         "provider_configuration": {
             "openai": bool(settings.llmproxy_openai_api_key),
             "anthropic": bool(settings.llmproxy_anthropic_api_key),

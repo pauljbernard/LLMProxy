@@ -104,5 +104,45 @@ def test_ollama_provider_streams_chat_chunks() -> None:
     assert chunks[-1]["output_tokens"] == 2
 
 
+def test_ollama_provider_maps_supported_request_parameters() -> None:
+    request = ChatCompletionRequest.model_validate(
+        {
+            "model": "proxy-local",
+            "messages": [{"role": "user", "content": "Return JSON."}],
+            "top_p": 0.85,
+            "seed": 5,
+            "stop": ["DONE"],
+            "response_format": {"type": "json_object"},
+            "metadata": {"session_id": "sess_ollama"},
+        }
+    )
+
+    def handler(request_http: httpx.Request) -> httpx.Response:
+        payload = json.loads(request_http.content.decode("utf-8"))
+        assert payload["options"]["top_p"] == 0.85
+        assert payload["options"]["seed"] == 5
+        assert payload["options"]["stop"] == ["DONE"]
+        assert payload["format"] == "json"
+        return httpx.Response(
+            200,
+            json={
+                "model": "qwen2.5-coder:14b",
+                "message": {"role": "assistant", "content": "{}"},
+                "done_reason": "stop",
+                "prompt_eval_count": 4,
+                "eval_count": 1,
+            },
+        )
+
+    provider = OllamaProvider(
+        "qwen2.5-coder:14b",
+        base_url="http://localhost:11434",
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = asyncio.run(provider.invoke(request))
+    assert result["content"] == "{}"
+
+
 async def _collect(stream) -> list[dict[str, object]]:
     return [chunk async for chunk in stream]

@@ -39,8 +39,8 @@ class AnthropicProvider(BaseProvider):
         )
 
     @staticmethod
-    def _request_messages(messages: Sequence[object]) -> list[dict[str, str]]:
-        payload: list[dict[str, str]] = []
+    def _request_messages(messages: Sequence[object]) -> list[dict[str, object]]:
+        payload: list[dict[str, object]] = []
         for message in messages:
             role = str(getattr(message, "role", "user"))
             if role == "system":
@@ -48,9 +48,27 @@ class AnthropicProvider(BaseProvider):
             payload.append(
                 {
                     "role": role,
-                    "content": str(getattr(message, "content", "")),
+                    "content": getattr(message, "content", ""),
                 }
             )
+        return payload
+
+    @staticmethod
+    def _request_payload(request: ChatCompletionRequest, *, model_id: str, stream: bool) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "model": model_id,
+            "messages": AnthropicProvider._request_messages(request.messages),
+            "temperature": request.temperature,
+            "max_tokens": request.max_tokens,
+        }
+        if request.top_p is not None:
+            payload["top_p"] = request.top_p
+        if request.stop is not None:
+            payload["stop_sequences"] = [request.stop] if isinstance(request.stop, str) else request.stop
+        if request.user:
+            payload["metadata"] = {"user_id": request.user}
+        if stream:
+            payload["stream"] = True
         return payload
 
     @staticmethod
@@ -65,18 +83,17 @@ class AnthropicProvider(BaseProvider):
 
     async def chat(self, request: ChatCompletionRequest) -> dict[str, object]:
         api_key = self._require_config(self.api_key, field_name="llmproxy_anthropic_api_key")
-        payload = {
-            "model": self.model_id,
-            "messages": self._request_messages(request.messages),
-            "temperature": request.temperature,
-            "max_tokens": request.max_tokens,
-        }
+        payload = self._request_payload(request, model_id=self.model_id, stream=False)
         headers = {
             "x-api-key": api_key,
             "anthropic-version": self.anthropic_version,
             "content-type": "application/json",
         }
-        async with self._client(base_url=self.base_url, headers=headers) as client:
+        async with self._client(
+            base_url=self.base_url,
+            headers=headers,
+            timeout_seconds=self._timeout_for_request(request),
+        ) as client:
             response = await client.post("/messages", json=payload)
             response.raise_for_status()
             raw_response = response.json()
@@ -97,19 +114,17 @@ class AnthropicProvider(BaseProvider):
 
     async def stream_chat(self, request: ChatCompletionRequest) -> AsyncIterator[dict[str, object]]:
         api_key = self._require_config(self.api_key, field_name="llmproxy_anthropic_api_key")
-        payload = {
-            "model": self.model_id,
-            "messages": self._request_messages(request.messages),
-            "temperature": request.temperature,
-            "max_tokens": request.max_tokens,
-            "stream": True,
-        }
+        payload = self._request_payload(request, model_id=self.model_id, stream=True)
         headers = {
             "x-api-key": api_key,
             "anthropic-version": self.anthropic_version,
             "content-type": "application/json",
         }
-        async with self._client(base_url=self.base_url, headers=headers) as client:
+        async with self._client(
+            base_url=self.base_url,
+            headers=headers,
+            timeout_seconds=self._timeout_for_request(request),
+        ) as client:
             async with client.stream("POST", "/messages", json=payload) as response:
                 response.raise_for_status()
                 event_name: str | None = None

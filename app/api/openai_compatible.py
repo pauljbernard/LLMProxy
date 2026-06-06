@@ -12,14 +12,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_async_session_factory
 from app.api.dependencies import get_async_session, get_runtime_settings, require_api_token
+from app.api.dependencies import AuthPrincipal, enforce_budget, enforce_model_access, record_virtual_key_usage
 from app.config import Settings
 from app.integration.performance import sample_performance
 from app.proxy.candidates import capture_training_candidate
 from app.proxy.classifier import classify_request
 from app.proxy.router import select_route
 from app.proxy.recorder import record_model_response, record_request, record_routing_decision
-from app.registry.model_registry import get_provider_registry, list_proxy_models
+from app.registry.model_registry import get_provider_registry, list_proxy_models, resolve_provider
 from app.services.observability import log_record
+from app.services.provider_health import (
+    is_provider_cooled_down,
+    record_provider_failure,
+    record_provider_success,
+)
+from app.services.response_cache import cache_key as response_cache_key, get_cached_response, put_cached_response
 from app.schemas.chat import (
     ChatCompletionRequest,
     ChatCompletionResponse,
@@ -33,7 +40,7 @@ from app.schemas.chat import (
 router = APIRouter(tags=["openai-compatible"])
 
 
-def _stream_chunk_bytes(*, response_id: str, model: str, delta: dict[str, str], finish_reason: str | None) -> bytes:
+def _stream_chunk_bytes(*, response_id: str, model: str, delta: dict[str, object], finish_reason: str | None) -> bytes:
     payload = {
         "id": response_id,
         "object": "chat.completion.chunk",
@@ -50,6 +57,37 @@ def _stream_chunk_bytes(*, response_id: str, model: str, delta: dict[str, str], 
     return f"data: {json.dumps(payload)}\n\n".encode("utf-8")
 
 
+def _merge_tool_calls(
+    existing: list[dict[str, object]],
+    chunk_tool_calls: list[dict[str, object]] | None,
+) -> list[dict[str, object]]:
+    if not chunk_tool_calls:
+        return existing
+    for item in chunk_tool_calls:
+        if not isinstance(item, dict):
+            continue
+        index = item.get("index")
+        if isinstance(index, int) and 0 <= index < len(existing):
+            current = existing[index]
+            current_id = item.get("id")
+            if isinstance(current_id, str):
+                current["id"] = current_id
+            if item.get("type"):
+                current["type"] = item["type"]
+            function = item.get("function")
+            if isinstance(function, dict):
+                current_function = current.setdefault("function", {})
+                if isinstance(function.get("name"), str):
+                    current_function["name"] = function["name"]
+                if isinstance(function.get("arguments"), str):
+                    current_function["arguments"] = str(current_function.get("arguments", "")) + function["arguments"]
+            continue
+        copy = dict(item)
+        copy.pop("index", None)
+        existing.append(copy)
+    return existing
+
+
 def _normalize_embedding_inputs(request: EmbeddingRequest) -> list[str]:
     if isinstance(request.input, str):
         return [request.input]
@@ -60,6 +98,53 @@ def _normalize_embedding_inputs(request: EmbeddingRequest) -> list[str]:
         else:
             values.append(item.text)
     return values
+
+
+def _message_token_estimate(messages) -> int:
+    total = 0
+    for message in messages:
+        content = getattr(message, "content", "")
+        if isinstance(content, str):
+            total += len(content.split())
+        elif isinstance(content, list):
+            for item in content:
+                if isinstance(item, dict) and isinstance(item.get("text"), str):
+                    total += len(str(item["text"]).split())
+    return total
+
+
+def _request_fits_provider(request: ChatCompletionRequest, provider) -> bool:
+    capability = getattr(provider, "capability", None)
+    if capability is None:
+        return True
+    prompt_tokens = _message_token_estimate(request.messages)
+    max_context = int(getattr(capability, "max_context_tokens", 0) or 0)
+    max_output = int(getattr(capability, "max_output_tokens", 0) or 0)
+    if max_output and request.max_tokens > max_output:
+        return False
+    if max_context and (prompt_tokens + request.max_tokens) > max_context:
+        return False
+    return True
+
+
+def _cache_payload_for_request(request: ChatCompletionRequest, *, provider_key: str, model_id: str) -> dict[str, object]:
+    return {
+        "requested_model": request.model,
+        "provider_key": provider_key,
+        "model_id": model_id,
+        "messages": [message.model_dump(mode="json") for message in request.messages],
+        "temperature": request.temperature,
+        "max_tokens": request.max_tokens,
+        "top_p": request.top_p,
+        "stop": request.stop,
+        "presence_penalty": request.presence_penalty,
+        "frequency_penalty": request.frequency_penalty,
+        "seed": request.seed,
+        "response_format": request.response_format.model_dump(mode="json") if request.response_format else None,
+        "tool_choice": request.tool_choice,
+        "tools": [tool.model_dump(mode="json") for tool in (request.tools or [])],
+        "functions": [fn.model_dump(mode="json") for fn in (request.functions or [])],
+    }
 
 
 def _select_embedding_provider(
@@ -131,6 +216,7 @@ async def _run_shadow_request(
     try:
         if request.stream and getattr(shadow_provider, "supports_streaming", False):
             aggregated_content = ""
+            aggregated_tool_calls: list[dict[str, object]] = []
             prompt_tokens = 0
             completion_tokens = 0
             finish_reason = "stop"
@@ -221,6 +307,22 @@ async def _resolve_route_and_registry(
     return await session.run_sync(_resolve)
 
 
+def _provider_for_route(
+    *,
+    settings: Settings,
+    provider_registry: dict[str, object],
+    selected_route,
+    provider_key: str,
+):
+    entry_index = getattr(selected_route, "entry_index", {})
+    return resolve_provider(
+        settings,
+        provider_registry,
+        provider_key=provider_key,
+        entry=entry_index.get(provider_key),
+    )
+
+
 async def _persist_selected_response_async(
     session: AsyncSession,
     *,
@@ -281,23 +383,71 @@ async def _persist_selected_response_async(
     await session.run_sync(_persist)
 
 
+async def _record_principal_usage_async(
+    session: AsyncSession,
+    *,
+    principal: AuthPrincipal,
+    cost_usd: float,
+) -> None:
+    def _write(sync_session):
+        record_virtual_key_usage(sync_session, principal, cost_usd=cost_usd)
+
+    await session.run_sync(_write)
+
+
 async def _invoke_with_fallback(
+    settings: Settings,
     provider_registry: dict[str, object],
     selected_route,
     request: ChatCompletionRequest,
 ) -> tuple[dict[str, object], object]:
     attempted = [selected_route.provider_key]
+    context_rejected = False
     try:
-        provider_result = await provider_registry[selected_route.provider_key].invoke(request)
+        provider = _provider_for_route(
+            settings=settings,
+            provider_registry=provider_registry,
+            selected_route=selected_route,
+            provider_key=selected_route.provider_key,
+        )
+        if provider is None:
+            raise KeyError(selected_route.provider_key)
+        if not _request_fits_provider(request, provider):
+            context_rejected = True
+            raise ValueError("context_window_exceeded")
+        provider_result = await _invoke_provider_with_retries(
+            settings=settings,
+            provider_key=selected_route.provider_key,
+            provider=provider,
+            request=request,
+        )
         return provider_result, selected_route.decision
     except Exception:
         for fallback in selected_route.decision.fallback_chain:
             fallback_key = fallback.provider
-            if fallback_key in attempted or fallback_key not in provider_registry:
+            if fallback_key in attempted:
                 continue
             attempted.append(fallback_key)
+            if is_provider_cooled_down(fallback_key):
+                continue
             try:
-                provider_result = await provider_registry[fallback_key].invoke(request)
+                provider = _provider_for_route(
+                    settings=settings,
+                    provider_registry=provider_registry,
+                    selected_route=selected_route,
+                    provider_key=fallback_key,
+                )
+                if provider is None:
+                    continue
+                if not _request_fits_provider(request, provider):
+                    context_rejected = True
+                    continue
+                provider_result = await _invoke_provider_with_retries(
+                    settings=settings,
+                    provider_key=fallback_key,
+                    provider=provider,
+                    request=request,
+                )
             except Exception:
                 continue
             selected_route.decision.selected_provider = fallback.provider
@@ -308,6 +458,11 @@ async def _invoke_with_fallback(
                 f"{selected_route.decision.decision_rationale} Fallback engaged after runtime error."
             )
             return provider_result, selected_route.decision
+        if context_rejected:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="The request exceeds the context window or output limits of all candidate providers.",
+            )
     raise HTTPException(
         status_code=status.HTTP_502_BAD_GATEWAY,
         detail="No provider in the selected route or fallback chain succeeded.",
@@ -315,25 +470,42 @@ async def _invoke_with_fallback(
 
 
 async def _stream_with_fallback(
+    settings: Settings,
     provider_registry: dict[str, object],
     selected_route,
     request: ChatCompletionRequest,
 ):
     attempted = [selected_route.provider_key]
+    context_rejected = False
     candidates = [(selected_route.provider_key, selected_route.decision.selected_model, selected_route.decision)]
     for fallback in selected_route.decision.fallback_chain:
-        if fallback.provider in attempted or fallback.provider not in provider_registry:
+        if fallback.provider in attempted:
             continue
         attempted.append(fallback.provider)
         candidates.append((fallback.provider, fallback.model, selected_route.decision))
 
     for index, (provider_key, selected_model, decision) in enumerate(candidates):
-        provider = provider_registry.get(provider_key)
+        if is_provider_cooled_down(provider_key):
+            continue
+        provider = _provider_for_route(
+            settings=settings,
+            provider_registry=provider_registry,
+            selected_route=selected_route,
+            provider_key=provider_key,
+        )
         if provider is None or not getattr(provider, "supports_streaming", False):
+            continue
+        if not _request_fits_provider(request, provider):
+            context_rejected = True
             continue
         started = False
         try:
-            async for chunk in provider.stream_chat(request):
+            async for chunk in _stream_provider_with_retries(
+                settings=settings,
+                provider_key=provider_key,
+                provider=provider,
+                request=request,
+            ):
                 if not started and index > 0:
                     decision.selected_provider = provider_key
                     decision.selected_provider_family = getattr(provider, "provider_family", provider_key)
@@ -346,9 +518,13 @@ async def _stream_with_fallback(
                 yield chunk, decision
             return
         except Exception:
-            if started:
-                raise
             continue
+
+    if context_rejected:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The request exceeds the context window or output limits of all candidate providers.",
+        )
 
     raise HTTPException(
         status_code=status.HTTP_502_BAD_GATEWAY,
@@ -356,17 +532,66 @@ async def _stream_with_fallback(
     )
 
 
+async def _invoke_provider_with_retries(*, settings: Settings, provider_key: str, provider, request: ChatCompletionRequest):
+    attempt = 0
+    while True:
+        try:
+            result = await provider.invoke(request)
+            record_provider_success(provider_key)
+            return result
+        except Exception:
+            attempt += 1
+            cooled_down = record_provider_failure(
+                provider_key,
+                allowed_fails=settings.llmproxy_provider_allowed_fails,
+                cooldown_seconds=settings.llmproxy_provider_cooldown_seconds,
+            )
+            if attempt > settings.llmproxy_provider_max_retries:
+                raise
+            if cooled_down:
+                raise
+            await asyncio.sleep(settings.llmproxy_provider_retry_backoff_seconds * (2 ** (attempt - 1)))
+
+
+async def _stream_provider_with_retries(*, settings: Settings, provider_key: str, provider, request: ChatCompletionRequest):
+    attempt = 0
+    while True:
+        started = False
+        try:
+            async for chunk in provider.stream_chat(request):
+                started = True
+                yield chunk
+            record_provider_success(provider_key)
+            return
+        except Exception:
+            cooled_down = record_provider_failure(
+                provider_key,
+                allowed_fails=settings.llmproxy_provider_allowed_fails,
+                cooldown_seconds=settings.llmproxy_provider_cooldown_seconds,
+            )
+            if started:
+                raise
+            attempt += 1
+            if attempt > settings.llmproxy_provider_max_retries:
+                raise
+            if cooled_down:
+                raise
+            await asyncio.sleep(settings.llmproxy_provider_retry_backoff_seconds * (2 ** (attempt - 1)))
+
+
 @router.post(
     "/v1/chat/completions",
     response_model=None,
-    dependencies=[Depends(require_api_token)],
 )
 async def chat_completions(
     request: ChatCompletionRequest,
     session: AsyncSession = Depends(get_async_session),
     settings: Settings = Depends(get_runtime_settings),
+    principal: AuthPrincipal = Depends(require_api_token),
 ) -> ChatCompletionResponse | StreamingResponse:
     request_log_id = None
+    enforce_budget(principal)
+    enforce_model_access(principal, request.model)
     classification = classify_request(request)
     try:
         request_log_id, request_created_at = await _record_request_async(
@@ -381,8 +606,15 @@ async def chat_completions(
             classification=classification,
             settings=settings,
         )
+        cache_hit_result = None
+        cache_key_value = None
         if request.stream:
-            selected_provider = provider_registry.get(selected_route.provider_key)
+            selected_provider = _provider_for_route(
+                settings=settings,
+                provider_registry=provider_registry,
+                selected_route=selected_route,
+                provider_key=selected_route.provider_key,
+            )
             if selected_provider is None or not getattr(selected_provider, "supports_streaming", False):
                 raise HTTPException(
                     status_code=status.HTTP_501_NOT_IMPLEMENTED,
@@ -393,6 +625,7 @@ async def chat_completions(
             async def event_stream():
                 started_at = perf_counter()
                 aggregated_content = ""
+                aggregated_tool_calls: list[dict[str, object]] = []
                 resolved_decision = selected_route.decision
                 provider_model = resolved_decision.selected_model
                 prompt_tokens = 0
@@ -405,7 +638,7 @@ async def chat_completions(
                     finish_reason=None,
                 )
                 try:
-                    async for chunk, resolved_decision in _stream_with_fallback(provider_registry, selected_route, request):
+                    async for chunk, resolved_decision in _stream_with_fallback(settings, provider_registry, selected_route, request):
                         provider_model = str(chunk.get("model", provider_model))
                         delta_text = str(chunk.get("delta", ""))
                         if delta_text:
@@ -416,20 +649,31 @@ async def chat_completions(
                                 delta={"content": delta_text},
                                 finish_reason=None,
                             )
+                        chunk_tool_calls = chunk.get("tool_calls")
+                        if isinstance(chunk_tool_calls, list) and chunk_tool_calls:
+                            aggregated_tool_calls = _merge_tool_calls(aggregated_tool_calls, chunk_tool_calls)
+                            yield _stream_chunk_bytes(
+                                response_id=response_id,
+                                model=provider_model,
+                                delta={"tool_calls": chunk_tool_calls},
+                                finish_reason=None,
+                            )
                         prompt_tokens = max(prompt_tokens, int(chunk.get("input_tokens", 0)))
                         completion_tokens = max(completion_tokens, int(chunk.get("output_tokens", 0)))
                         if chunk.get("finish_reason"):
                             finish_reason = str(chunk["finish_reason"])
-                    if prompt_tokens == 0:
-                        prompt_tokens = sum(len(message.content.split()) for message in request.messages)
-                    if completion_tokens == 0:
-                        completion_tokens = len(aggregated_content.split())
                     provider_name = resolved_decision.selected_provider
-                    selected_provider = provider_registry.get(provider_name)
+                    selected_provider = _provider_for_route(
+                        settings=settings,
+                        provider_registry=provider_registry,
+                        selected_route=selected_route,
+                        provider_key=provider_name,
+                    )
                     price_per_token = getattr(selected_provider, "price_per_token", 0.0)
                     provider_result = {
                         "model": provider_model,
                         "content": aggregated_content,
+                        "tool_calls": aggregated_tool_calls or None,
                         "input_tokens": prompt_tokens,
                         "output_tokens": completion_tokens,
                         "latency_ms": int((perf_counter() - started_at) * 1000),
@@ -448,8 +692,18 @@ async def chat_completions(
                         provider_result=provider_result,
                         resolved_decision=resolved_decision,
                     )
+                    await _record_principal_usage_async(
+                        session,
+                        principal=principal,
+                        cost_usd=float(provider_result["cost_estimate"]),
+                    )
                     for shadow_provider_key in selected_route.shadow_provider_keys:
-                        shadow_provider = provider_registry.get(shadow_provider_key)
+                        shadow_provider = _provider_for_route(
+                            settings=settings,
+                            provider_registry=provider_registry,
+                            selected_route=selected_route,
+                            provider_key=shadow_provider_key,
+                        )
                         if shadow_provider is None:
                             continue
                         asyncio.create_task(
@@ -506,7 +760,26 @@ async def chat_completions(
                 yield b"data: [DONE]\n\n"
 
             return StreamingResponse(event_stream(), media_type="text/event-stream")
-        provider_result, resolved_decision = await _invoke_with_fallback(provider_registry, selected_route, request)
+        if settings.llmproxy_response_cache_enabled:
+            cache_key_value = response_cache_key(
+                _cache_payload_for_request(
+                    request,
+                    provider_key=selected_route.provider_key,
+                    model_id=str(selected_route.decision.selected_model),
+                )
+            )
+            cache_hit_result = get_cached_response(cache_key_value)
+        if cache_hit_result is not None:
+            provider_result = dict(cache_hit_result)
+            resolved_decision = selected_route.decision
+        else:
+            provider_result, resolved_decision = await _invoke_with_fallback(settings, provider_registry, selected_route, request)
+            if settings.llmproxy_response_cache_enabled and cache_key_value is not None:
+                put_cached_response(
+                    cache_key_value,
+                    provider_result,
+                    ttl_seconds=settings.llmproxy_response_cache_ttl_seconds,
+                )
         await _persist_selected_response_async(
             session,
             request=request,
@@ -516,8 +789,18 @@ async def chat_completions(
             provider_result=provider_result,
             resolved_decision=resolved_decision,
         )
+        await _record_principal_usage_async(
+            session,
+            principal=principal,
+            cost_usd=float(provider_result["cost_estimate"]),
+        )
         for shadow_provider_key in selected_route.shadow_provider_keys:
-            shadow_provider = provider_registry.get(shadow_provider_key)
+            shadow_provider = _provider_for_route(
+                settings=settings,
+                provider_registry=provider_registry,
+                selected_route=selected_route,
+                provider_key=shadow_provider_key,
+            )
             if shadow_provider is None:
                 continue
             asyncio.create_task(
@@ -551,6 +834,10 @@ async def chat_completions(
             content=str(provider_result["content"]),
             response_id=request_log_id.replace("req_", "chatcmpl_"),
             resolved_model=str(provider_result["model"]),
+            prompt_tokens=int(provider_result.get("input_tokens", 0)),
+            completion_tokens=int(provider_result.get("output_tokens", 0)),
+            finish_reason=str(provider_result.get("finish_reason", "stop")),
+            tool_calls=provider_result.get("tool_calls") if isinstance(provider_result.get("tool_calls"), list) else None,
         )
     except HTTPException as exc:
         log_record(
@@ -584,18 +871,23 @@ async def chat_completions(
         raise
 
 
-@router.get("/v1/models", response_model=list[ModelInfo], dependencies=[Depends(require_api_token)])
+@router.get("/v1/models", response_model=list[ModelInfo])
 def list_models(
     settings: Settings = Depends(get_runtime_settings),
+    principal: AuthPrincipal = Depends(require_api_token),
 ) -> list[ModelInfo]:
-    return [ModelInfo.model_validate(item) for item in list_proxy_models(settings)]
+    allowed_models = set(principal.models_allowed) if principal.models_allowed else None
+    return [ModelInfo.model_validate(item) for item in list_proxy_models(settings, allowed_models=allowed_models)]
 
 
-@router.post("/v1/embeddings", response_model=EmbeddingResponse, dependencies=[Depends(require_api_token)])
+@router.post("/v1/embeddings", response_model=EmbeddingResponse)
 async def embeddings(
     request: EmbeddingRequest,
     settings: Settings = Depends(get_runtime_settings),
+    principal: AuthPrincipal = Depends(require_api_token),
 ) -> EmbeddingResponse:
+    enforce_budget(principal)
+    enforce_model_access(principal, request.model)
     inputs = _normalize_embedding_inputs(request)
     provider_registry = get_provider_registry(settings)
     provider = _select_embedding_provider(

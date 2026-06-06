@@ -119,3 +119,141 @@ def test_router_records_loaded_policy_version() -> None:
     )
 
     assert selected_route.decision.policy_version == "rpol_1"
+
+
+def test_router_prefers_frontier_policy_entry_over_hardcoded_default() -> None:
+    request = ChatCompletionRequest.model_validate(
+        {
+            "model": "proxy-auto",
+            "messages": [{"role": "user", "content": "Research this topic"}],
+            "metadata": {"session_id": "sess_frontier", "domain_hint": "research", "task_type_hint": "analysis"},
+        }
+    )
+    classification = classify_request(request)
+    policy_record = RoutingPolicyVersion(
+        id="rpol_frontier",
+        policy_version="rpol_frontier",
+        policy_json={
+            "entries": [
+                {
+                    "entry_type": "frontier",
+                    "provider_key": "openai",
+                    "provider_family": "OpenAI",
+                    "model_id": "gpt-frontier-research",
+                    "domains": ["research"],
+                    "task_types": ["analysis"],
+                    "deployment_mode": "production",
+                }
+            ]
+        },
+    )
+
+    selected_route = select_route(
+        "req_frontier",
+        request,
+        classification,
+        Settings(),
+        session=FakeSession(policy_record=policy_record),
+    )
+
+    assert selected_route.provider_key == "openai"
+    assert selected_route.decision.selected_model == "gpt-frontier-research"
+    assert selected_route.decision.policy_version == "rpol_frontier"
+
+
+def test_router_prefers_more_specific_local_entry() -> None:
+    request = ChatCompletionRequest.model_validate(
+        {
+            "model": "test-routing-model",
+            "messages": [{"role": "user", "content": "Review this code diff"}],
+            "metadata": {"session_id": "sess_specific", "domain_hint": "coding", "task_type_hint": "code_review"},
+        }
+    )
+    classification = classify_request(request)
+    policy_record = RoutingPolicyVersion(
+        id="rpol_local_specific",
+        policy_version="rpol_local_specific",
+        policy_json={
+            "entries": [
+                {
+                    "entry_type": "local",
+                    "provider_key": "local:coding-general",
+                    "provider_family": "local runtime",
+                    "model_alias": "coding-general",
+                    "domains": ["coding"],
+                    "deployment_mode": "production",
+                    "quality_summary": {"overall_score": 0.80},
+                },
+                {
+                    "entry_type": "local",
+                    "provider_key": "local:coding-reviewer",
+                    "provider_family": "local runtime",
+                    "model_alias": "coding-reviewer",
+                    "domains": ["coding"],
+                    "task_types": ["code_review"],
+                    "deployment_mode": "production",
+                    "quality_summary": {"overall_score": 0.70},
+                },
+            ]
+        },
+    )
+
+    selected_route = select_route(
+        "req_specific",
+        request,
+        classification,
+        Settings(),
+        session=FakeSession(policy_record=policy_record),
+    )
+
+    assert selected_route.provider_key == "local:coding-reviewer"
+    assert selected_route.decision.selected_provider == "local:coding-reviewer"
+    assert selected_route.decision.selected_model == "coding-reviewer"
+
+
+def test_router_prefers_higher_quality_local_entry_when_specificity_ties() -> None:
+    request = ChatCompletionRequest.model_validate(
+        {
+            "model": "test-routing-model",
+            "messages": [{"role": "user", "content": "Write a Python helper"}],
+            "metadata": {"session_id": "sess_quality", "domain_hint": "coding", "task_type_hint": "generation"},
+        }
+    )
+    classification = classify_request(request)
+    policy_record = RoutingPolicyVersion(
+        id="rpol_local_quality",
+        policy_version="rpol_local_quality",
+        policy_json={
+            "entries": [
+                {
+                    "entry_type": "local",
+                    "provider_key": "local:coding-low",
+                    "provider_family": "local runtime",
+                    "model_alias": "coding-low",
+                    "domains": ["coding"],
+                    "deployment_mode": "production",
+                    "quality_summary": {"overall_score": 0.81},
+                },
+                {
+                    "entry_type": "local",
+                    "provider_key": "local:coding-high",
+                    "provider_family": "local runtime",
+                    "model_alias": "coding-high",
+                    "domains": ["coding"],
+                    "deployment_mode": "production",
+                    "quality_summary": {"overall_score": 0.92},
+                },
+            ]
+        },
+    )
+
+    selected_route = select_route(
+        "req_quality",
+        request,
+        classification,
+        Settings(),
+        session=FakeSession(policy_record=policy_record),
+    )
+
+    assert selected_route.provider_key == "local:coding-high"
+    assert selected_route.decision.selected_model == "coding-high"

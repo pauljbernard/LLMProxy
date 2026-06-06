@@ -291,6 +291,16 @@ function csv(value) {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
 }
 
+function parseFallbackChain(value) {
+  return csv(value).map((item, index) => {
+    const [provider, model] = item.split(":");
+    if (!provider || !model) {
+      throw new Error("Fallback chain entries must use provider:model format.");
+    }
+    return { order: index + 1, provider: provider.trim(), model: model.trim() };
+  });
+}
+
 function parseMessages(text) {
   return text
     .split("\n")
@@ -440,6 +450,11 @@ async function refreshConfig() {
     emptyMessage: "Configuration values will appear here once loaded.",
     allowEdit: true,
   });
+  const autoDeployCheckbox = document.querySelector('#automation-form [name="auto_deploy_approved_evaluations"]');
+  if (autoDeployCheckbox) {
+    autoDeployCheckbox.checked = Boolean(payload.llmproxy_auto_deploy_approved_evaluations);
+  }
+  setFieldValue("#automation-form", "auto_deploy_deployment_mode", payload.llmproxy_auto_deploy_deployment_mode || "production");
   return payload;
 }
 
@@ -552,38 +567,68 @@ async function refreshPolicies() {
     if (!entries.length) {
       return [{
         policy_version: policyVersion.policy_version,
-        domain: "-",
+        entry_type: "-",
+        domains: "-",
         mode: "-",
         provider: "-",
+        model: "-",
         canary_percent: 0,
         detail: policyVersion,
       }];
     }
-    return entries.map((entry) => ({
+    return entries.map((entry, index) => ({
+      entry_id: entry.entry_id || null,
       policy_version: policyVersion.policy_version,
-      domain: entry.domain || "-",
-      mode: entry.mode || "-",
-      provider: entry.provider || "-",
+      entry_type: entry.entry_type || (String(entry.provider_key || "").startsWith("local:") ? "local" : "frontier"),
+      domains: (entry.domains || []).join(", ") || "-",
+      mode: entry.deployment_mode || "-",
+      provider: entry.provider_key || "-",
+      model: entry.model_alias || entry.model_id || "-",
       canary_percent: entry.canary_percent ?? 0,
-      detail: { policy_version: policyVersion.policy_version, entry },
+      detail: { policy_version: policyVersion.policy_version, entry, entry_index: index },
     }));
   });
   const host = $("#policies-table");
   host.innerHTML = "";
   host.appendChild(
-    makeTable(["Version", "Domain", "Mode", "Provider", "Canary", "Actions"], rows, (row) => {
+    makeTable(["Version", "Type", "Domains", "Mode", "Provider", "Model", "Actions"], rows, (row) => {
       const tr = document.createElement("tr");
       tr.innerHTML = `
         <td><strong>${escapeHtml(row.policy_version)}</strong></td>
-        <td>${escapeHtml(row.domain)}</td>
+        <td>${statusBadge(row.entry_type)}</td>
+        <td>${escapeHtml(row.domains)}</td>
         <td>${escapeHtml(row.mode)}</td>
         <td>${escapeHtml(row.provider)}</td>
-        <td>${escapeHtml(String(row.canary_percent))}%</td>
+        <td>${escapeHtml(row.model)}</td>
         <td></td>
       `;
       const actions = document.createElement("div");
       actions.className = "table-actions";
       actions.appendChild(createActionButton("Inspect", () => showDetailCard("#model-detail-card", "#model-detail-output", row.detail), { accent: true }));
+      if (row.detail?.entry?.entry_type === "frontier") {
+        actions.appendChild(createActionButton("Edit", () => {
+          const entry = row.detail.entry;
+          setFieldValue("#frontier-policy-form", "entry_id", entry.entry_id || "");
+          setFieldValue("#frontier-policy-form", "provider_key", entry.provider_key || "");
+          setFieldValue("#frontier-policy-form", "model_id", entry.model_id || "");
+          setFieldValue("#frontier-policy-form", "domains", (entry.domains || []).join(","));
+          setFieldValue("#frontier-policy-form", "task_types", (entry.task_types || []).join(","));
+          setFieldValue("#frontier-policy-form", "deployment_mode", entry.deployment_mode || "production");
+          setFieldValue("#frontier-policy-form", "canary_percent", String(entry.canary_percent ?? 0));
+          setFieldValue("#frontier-policy-form", "endpoint_url", entry.endpoint_url || "");
+          setFieldValue("#frontier-policy-form", "fallback_chain", (entry.fallback_chain || []).map((item) => `${item.provider}:${item.model}`).join(","));
+          setFieldValue("#frontier-policy-form", "decision_rationale", entry.decision_rationale || "");
+          renderOutput("#frontier-policy-output", row.detail);
+        }));
+        if (row.entry_id) {
+          actions.appendChild(createActionButton("Delete", async () => {
+            const result = await apiFetch(`/deployment/routing-policies/entries/${row.entry_id}`, { method: "DELETE" });
+            renderOutput("#frontier-policy-output", result);
+            showToast("Frontier policy entry deleted.", "warn");
+            await refreshPolicies();
+          }, { destructive: true, confirmMessage: `Delete frontier policy entry ${row.entry_id}?` }));
+        }
+      }
       tr.lastElementChild.appendChild(actions);
       return tr;
     }, "Routing policies will appear here as versions are published."),
@@ -887,6 +932,10 @@ async function refreshOperationsSummary() {
     { label: "Stream Starts", value: String(summary.streaming?.stream_start_count ?? 0) },
     { label: "Stream Complete", value: String(summary.streaming?.stream_complete_count ?? 0) },
     { label: "Stream Failed", value: String(summary.streaming?.stream_failed_count ?? 0) },
+    {
+      label: "Providers Cooling Down",
+      value: String(Object.values(summary.provider_health || {}).filter((item) => item && item.cooled_down).length),
+    },
   ]);
   renderLogTable("#ops-stream-live-table", (summary.streaming && summary.streaming.recent_stream_summaries) || []);
   return { summary, metrics };
@@ -922,6 +971,10 @@ async function refreshOperationsLive() {
     { label: "Stream Starts", value: String(payload.summary?.streaming?.stream_start_count ?? 0) },
     { label: "Stream Complete", value: String(payload.summary?.streaming?.stream_complete_count ?? 0) },
     { label: "Stream Failed", value: String(payload.summary?.streaming?.stream_failed_count ?? 0) },
+    {
+      label: "Providers Cooling Down",
+      value: String(Object.values(payload.summary?.provider_health || {}).filter((item) => item && item.cooled_down).length),
+    },
   ]);
   renderLogTable("#ops-stream-live-table", (payload.summary?.streaming && payload.summary.streaming.recent_stream_summaries) || []);
   renderLogTable("#ops-logs-table", payload.logs);
@@ -1240,6 +1293,39 @@ async function initialize() {
     }
   });
 
+  $("#frontier-policy-reset")?.addEventListener("click", () => {
+    $("#frontier-policy-form")?.reset();
+    setFieldValue("#frontier-policy-form", "entry_id", "");
+    setFieldValue("#frontier-policy-form", "deployment_mode", "production");
+    setFieldValue("#frontier-policy-form", "canary_percent", "0.0");
+  });
+
+  $("#frontier-policy-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const body = {
+      entry_id: data.get("entry_id") || null,
+      provider_key: data.get("provider_key"),
+      model_id: data.get("model_id"),
+      domains: csv(String(data.get("domains") || "")),
+      task_types: csv(String(data.get("task_types") || "")),
+      deployment_mode: data.get("deployment_mode"),
+      canary_percent: Number(data.get("canary_percent") || 0),
+      endpoint_url: String(data.get("endpoint_url") || "").trim() || null,
+      fallback_chain: parseFallbackChain(String(data.get("fallback_chain") || "")),
+      decision_rationale: String(data.get("decision_rationale") || "").trim() || null,
+    };
+    try {
+      const result = await withLoading(event.submitter, () => apiFetch("/deployment/routing-policies/frontier", { method: "POST", body: JSON.stringify(body) }));
+      renderOutput("#frontier-policy-output", result);
+      showToast(body.entry_id ? "Frontier policy entry updated." : "Frontier policy entry created.", "ok");
+      await refreshPolicies();
+    } catch (error) {
+      showToast(`Frontier policy update failed: ${String(error)}`, "err");
+      logConsole("frontier policy update failed", String(error));
+    }
+  });
+
   $("#deploy-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const submitter = event.submitter;
@@ -1269,6 +1355,39 @@ async function initialize() {
     } catch (error) {
       showToast(`Deployment action failed: ${String(error)}`, "err");
       logConsole("deployment action failed", String(error));
+    }
+  });
+
+  $("#automation-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submitter = event.submitter;
+    const data = new FormData(event.currentTarget);
+    const checkbox = document.querySelector('#automation-form [name="auto_deploy_approved_evaluations"]');
+    const autoDeployEnabled = checkbox?.checked ? "true" : "false";
+    try {
+      const results = await withLoading(submitter, async () => {
+        const first = await apiFetch("/admin/api/config/set", {
+          method: "POST",
+          body: JSON.stringify({
+            key: "LLMPROXY_AUTO_DEPLOY_APPROVED_EVALUATIONS",
+            value: autoDeployEnabled,
+          }),
+        });
+        const second = await apiFetch("/admin/api/config/set", {
+          method: "POST",
+          body: JSON.stringify({
+            key: "LLMPROXY_AUTO_DEPLOY_DEPLOYMENT_MODE",
+            value: String(data.get("auto_deploy_deployment_mode") || "production"),
+          }),
+        });
+        return { auto_deploy: first, deployment_mode: second };
+      });
+      renderOutput("#automation-output", results);
+      showToast("Automation settings saved to env file.", "ok");
+      await refreshConfig();
+    } catch (error) {
+      showToast(`Automation settings update failed: ${String(error)}`, "err");
+      logConsole("automation settings update failed", String(error));
     }
   });
 

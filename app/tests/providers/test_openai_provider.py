@@ -66,6 +66,141 @@ def test_openai_provider_normalizes_chat_completion_response() -> None:
     assert result["raw_response"]["id"] == "chatcmpl_123"
 
 
+def test_openai_provider_passes_through_modern_chat_parameters() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode("utf-8"))
+        assert payload["top_p"] == 0.9
+        assert payload["n"] == 2
+        assert payload["stop"] == ["END"]
+        assert payload["presence_penalty"] == 0.3
+        assert payload["frequency_penalty"] == 0.1
+        assert payload["seed"] == 7
+        assert payload["logit_bias"] == {"42": -5}
+        assert payload["logprobs"] is True
+        assert payload["top_logprobs"] == 2
+        assert payload["user"] == "user-123"
+        assert payload["response_format"] == {"type": "json_object", "json_schema": None}
+        assert payload["parallel_tool_calls"] is False
+        assert payload["tool_choice"] == {"type": "function", "function": {"name": "lookup"}}
+        assert payload["tools"][0]["function"]["name"] == "lookup"
+        assert payload["functions"][0]["name"] == "legacy_lookup"
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl_456",
+                "model": "gpt-5.5",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "call_1",
+                                    "type": "function",
+                                    "function": {"name": "lookup", "arguments": "{\"id\":1}"},
+                                }
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ],
+                "usage": {"prompt_tokens": 9, "completion_tokens": 3, "total_tokens": 12},
+            },
+        )
+
+    provider = OpenAIProvider(
+        "gpt-5.5",
+        api_key="test-openai-key",
+        base_url="https://api.openai.com/v1",
+        transport=httpx.MockTransport(handler),
+    )
+    request = ChatCompletionRequest.model_validate(
+        {
+            "model": "proxy-auto",
+            "messages": [{"role": "user", "content": "Find this record."}],
+            "top_p": 0.9,
+            "n": 2,
+            "stop": ["END"],
+            "presence_penalty": 0.3,
+            "frequency_penalty": 0.1,
+            "seed": 7,
+            "logit_bias": {"42": -5},
+            "logprobs": True,
+            "top_logprobs": 2,
+            "user": "user-123",
+            "response_format": {"type": "json_object"},
+            "parallel_tool_calls": False,
+            "tool_choice": {"type": "function", "function": {"name": "lookup"}},
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "lookup",
+                        "description": "Lookup a record",
+                        "parameters": {"type": "object"},
+                    },
+                }
+            ],
+            "functions": [{"name": "legacy_lookup", "parameters": {"type": "object"}}],
+            "metadata": {"session_id": "sess_provider"},
+        }
+    )
+
+    result = asyncio.run(provider.invoke(request))
+
+    assert result["finish_reason"] == "tool_calls"
+    assert result["tool_calls"][0]["function"]["name"] == "lookup"
+
+
+def test_openai_provider_uses_request_timeout_override(monkeypatch) -> None:
+    provider = OpenAIProvider(
+        "gpt-5.5",
+        api_key="test-openai-key",
+        base_url="https://api.openai.com/v1",
+    )
+    request = ChatCompletionRequest.model_validate(
+        {
+            "model": "proxy-auto",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "timeout_seconds": 5.5,
+            "metadata": {"session_id": "sess_provider"},
+        }
+    )
+    captured: dict[str, float] = {}
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, path: str, json: dict[str, object]):
+            return httpx.Response(
+                200,
+                request=httpx.Request("POST", f"https://api.openai.com/v1{path}"),
+                json={
+                    "id": "chatcmpl_timeout",
+                    "model": "gpt-5.5",
+                    "choices": [{"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+                },
+            )
+
+    def fake_client(*, base_url: str, headers=None, timeout_seconds=None):
+        captured["timeout_seconds"] = timeout_seconds
+        return _Client()
+
+    monkeypatch.setattr(provider, "_client", fake_client)
+
+    result = asyncio.run(provider.chat(request))
+
+    assert captured["timeout_seconds"] == 5.5
+    assert result["content"] == "ok"
+
+
 def test_openai_provider_requires_api_key() -> None:
     provider = OpenAIProvider("gpt-5.5")
 

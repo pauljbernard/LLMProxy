@@ -200,6 +200,25 @@ class IntegrationEvent(Base):
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class VirtualAPIKey(Base):
+    __tablename__ = "virtual_api_key"
+    __table_args__ = {"schema": "integration"}
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    key_prefix: Mapped[str] = mapped_column(String, index=True)
+    key_hash: Mapped[str] = mapped_column(String, unique=True, index=True)
+    display_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    owner_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    role: Mapped[str] = mapped_column(String, default="api")
+    status: Mapped[str] = mapped_column(String, default="active", index=True)
+    models_allowed_json: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    spend_usd: Mapped[Decimal] = mapped_column(Numeric(12, 6), default=Decimal("0"))
+    max_budget_usd: Mapped[Decimal | None] = mapped_column(Numeric(12, 6), nullable=True)
+    budget_reset_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class RoutingPolicyVersion(Base):
     __tablename__ = "routing_policy_version"
     __table_args__ = {"schema": "integration"}

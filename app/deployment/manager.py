@@ -13,12 +13,40 @@ from app.deployment.ollama import deploy_to_ollama
 from app.deployment.vllm import deploy_to_vllm
 from app.integration.events import emit_event
 from app.integration.routing_policy import get_latest_policy, list_policy_versions, persist_policy_version
+from app.proxy.recorder import generate_prefixed_id
 from app.registry.artifact_store import get_model_package_by_alias
-from app.schemas.integration import DeploymentRequest, DeploymentResponse
+from app.schemas.integration import DeploymentRequest, DeploymentResponse, FrontierPolicyEntryRequest
 
 
 def list_routing_policies(session: Session) -> list[object]:
     return list_policy_versions(session)
+
+
+def _provider_family_for_frontier(provider_key: str) -> str:
+    return {
+        "openai": "OpenAI",
+        "anthropic": "Anthropic",
+        "google": "Google Gemini",
+        "xai": "xAI",
+        "azure_openai": "Azure OpenAI",
+        "bedrock": "AWS Bedrock",
+    }.get(provider_key, provider_key)
+
+
+def _normalized_policy_entries(existing_policy: dict[str, object]) -> list[dict[str, object]]:
+    entries: list[dict[str, object]] = []
+    for entry in existing_policy.get("entries", []):
+        normalized = dict(entry)
+        normalized.setdefault("entry_id", generate_prefixed_id("rpentry"))
+        normalized.setdefault(
+            "entry_type",
+            "local"
+            if str(normalized.get("provider_key", "")).startswith("local:")
+            or str(normalized.get("provider_family", "")).lower() == "local runtime"
+            else "frontier",
+        )
+        entries.append(normalized)
+    return entries
 
 
 def _runtime_for_package(model_package: dict[str, object]) -> str:
@@ -72,13 +100,17 @@ def deploy_model(
     _healthcheck_runtime(runtime, deployment_result)
 
     existing_policy = get_latest_policy(session)
-    existing_entries = list(existing_policy.get("entries", []))
+    existing_entries = _normalized_policy_entries(existing_policy)
     domains = request.domains or [str(domain) for domain in package.get("domains", [])]
     task_types = request.task_types or [str(task_type) for task_type in package.get("task_types", [])]
     if request.deployment_mode == "production":
         rewritten_entries: list[dict[str, object]] = []
         for entry in existing_entries:
-            if entry.get("deployment_mode") == "production" and set(entry.get("domains", [])) & set(domains):
+            if (
+                entry.get("deployment_mode") == "production"
+                and entry.get("provider_family") == "local runtime"
+                and set(entry.get("domains", [])) & set(domains)
+            ):
                 prior_entry = dict(entry)
                 prior_entry["deployment_mode"] = "previous"
                 rewritten_entries.append(prior_entry)
@@ -88,6 +120,8 @@ def deploy_model(
 
     existing_entries = [entry for entry in existing_entries if str(entry.get("model_alias")) != model_alias]
     policy_entry = {
+        "entry_type": "local",
+        "entry_id": generate_prefixed_id("rpentry"),
         "model_alias": model_alias,
         "model_registry_id": package["model_registry_id"],
         "deployment_mode": request.deployment_mode,
@@ -100,6 +134,7 @@ def deploy_model(
         "domains": domains,
         "task_types": task_types,
         "canary_percent": request.canary_percent,
+        "quality_summary": package.get("quality_summary", {}),
     }
     existing_entries.append(policy_entry)
     new_policy = {"entries": existing_entries}
@@ -140,7 +175,7 @@ def rollback_model(
     settings: Settings,
 ) -> DeploymentResponse:
     existing_policy = get_latest_policy(session)
-    existing_entries = list(existing_policy.get("entries", []))
+    existing_entries = _normalized_policy_entries(existing_policy)
     target_entry = next((entry for entry in existing_entries if str(entry.get("model_alias")) == model_alias), None)
     if target_entry is None:
         raise ValueError(f"Deployed model '{model_alias}' was not found in the active routing policy.")
@@ -197,3 +232,75 @@ def rollback_model(
         runtime=str(target_entry.get("runtime", "ollama")),
         endpoint_url=str(target_entry.get("endpoint_url", "http://localhost:11434")),
     )
+
+
+def upsert_frontier_policy_entry(
+    session: Session,
+    *,
+    request: FrontierPolicyEntryRequest,
+) -> tuple[str, str]:
+    existing_policy = get_latest_policy(session)
+    existing_entries = _normalized_policy_entries(existing_policy)
+    entry_id = request.entry_id or generate_prefixed_id("rpentry")
+    entry = {
+        "entry_id": entry_id,
+        "entry_type": "frontier",
+        "provider_key": request.provider_key,
+        "provider_name": request.provider_key,
+        "provider_family": _provider_family_for_frontier(request.provider_key),
+        "model_id": request.model_id,
+        "domains": request.domains,
+        "task_types": request.task_types or [],
+        "deployment_mode": request.deployment_mode,
+        "canary_percent": request.canary_percent,
+        "endpoint_url": request.endpoint_url,
+        "fallback_chain": [item.model_dump(mode="json") for item in (request.fallback_chain or [])],
+        "decision_rationale": request.decision_rationale,
+    }
+    replaced = False
+    rewritten_entries: list[dict[str, object]] = []
+    for candidate in existing_entries:
+        if str(candidate.get("entry_id")) == entry_id:
+            rewritten_entries.append(entry)
+            replaced = True
+        else:
+            rewritten_entries.append(candidate)
+    if not replaced:
+        rewritten_entries.append(entry)
+    policy_record = persist_policy_version(session, policy_json={"entries": rewritten_entries})
+    emit_event(
+        session,
+        event_type="routing.updated",
+        source="llmproxy",
+        payload={
+            "policy_version": policy_record.policy_version,
+            "entry_id": entry_id,
+            "entry_type": "frontier",
+            "action": "updated" if replaced else "created",
+        },
+    )
+    return entry_id, policy_record.policy_version
+
+
+def delete_policy_entry(
+    session: Session,
+    *,
+    entry_id: str,
+) -> str:
+    existing_policy = get_latest_policy(session)
+    existing_entries = _normalized_policy_entries(existing_policy)
+    remaining_entries = [entry for entry in existing_entries if str(entry.get("entry_id")) != entry_id]
+    if len(remaining_entries) == len(existing_entries):
+        raise ValueError(f"Routing policy entry '{entry_id}' was not found.")
+    policy_record = persist_policy_version(session, policy_json={"entries": remaining_entries})
+    emit_event(
+        session,
+        event_type="routing.updated",
+        source="llmproxy",
+        payload={
+            "policy_version": policy_record.policy_version,
+            "entry_id": entry_id,
+            "action": "deleted",
+        },
+    )
+    return policy_record.policy_version

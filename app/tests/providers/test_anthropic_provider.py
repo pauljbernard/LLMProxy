@@ -95,5 +95,44 @@ def test_anthropic_provider_streams_message_chunks() -> None:
     assert chunks[-1]["output_tokens"] == 2
 
 
+def test_anthropic_provider_maps_supported_request_parameters() -> None:
+    request = ChatCompletionRequest.model_validate(
+        {
+            "model": "proxy-teacher",
+            "messages": [{"role": "user", "content": "Design a bounded context."}],
+            "top_p": 0.7,
+            "stop": ["END"],
+            "user": "user-42",
+            "metadata": {"session_id": "sess_anthropic"},
+        }
+    )
+
+    def handler(request_http: httpx.Request) -> httpx.Response:
+        payload = json.loads(request_http.content.decode("utf-8"))
+        assert payload["top_p"] == 0.7
+        assert payload["stop_sequences"] == ["END"]
+        assert payload["metadata"] == {"user_id": "user-42"}
+        return httpx.Response(
+            200,
+            json={
+                "id": "msg_456",
+                "model": "claude-3-5-sonnet",
+                "content": [{"type": "text", "text": "Mapped."}],
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 5, "output_tokens": 1},
+            },
+        )
+
+    provider = AnthropicProvider(
+        "claude-3-5-sonnet",
+        api_key="test-anthropic-key",
+        base_url="https://api.anthropic.com/v1",
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = asyncio.run(provider.invoke(request))
+    assert result["content"] == "Mapped."
+
+
 async def _collect(stream) -> list[dict[str, object]]:
     return [chunk async for chunk in stream]

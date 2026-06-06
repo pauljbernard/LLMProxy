@@ -20,6 +20,12 @@ class Settings(BaseSettings):
     llmproxy_database_wait_timeout_seconds: int = 30
     llmproxy_run_migrations_on_start: bool = True
     llmproxy_provider_timeout_seconds: float = 60.0
+    llmproxy_provider_max_retries: int = 2
+    llmproxy_provider_retry_backoff_seconds: float = 0.25
+    llmproxy_provider_allowed_fails: int = 3
+    llmproxy_provider_cooldown_seconds: int = 60
+    llmproxy_response_cache_enabled: bool = False
+    llmproxy_response_cache_ttl_seconds: int = 300
     llmproxy_training_backend_timeout_seconds: int = 14400
     llmproxy_evaluation_timeout_seconds: int = 3600
     llmproxy_worker_include_job_types: str | None = None
@@ -94,6 +100,8 @@ class Settings(BaseSettings):
     )
     llmproxy_promotion_max_quality_delta_vs_frontier: float = 0.05
     llmproxy_promotion_min_value_per_dollar_gain_vs_frontier: float = 3.0
+    llmproxy_auto_deploy_approved_evaluations: bool = False
+    llmproxy_auto_deploy_deployment_mode: str = "production"
     llmproxy_exports_path: str = "/data/exports"
     llmproxy_datasets_path: str = "/data/datasets"
     llmproxy_models_path: str = "/data/models"

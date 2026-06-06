@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from secrets import token_urlsafe
 from typing import Any
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse
@@ -16,11 +18,12 @@ from app.api.dependencies import (
     AuthPrincipal,
     get_runtime_settings,
     get_session,
+    virtual_key_hash,
     require_api_token,
     require_operator_token,
 )
 from app.config import Settings
-from app.db.models import DatasetExport, DatasetImport, DatasetVersion, EvaluationRun, IntegrationEvent, JobQueueRecord, JudgeCritique, ModelPerformanceSample, ModelResponse, RequestLog, RoutingDecisionRecord, TrainingCandidate, TrainingRun
+from app.db.models import DatasetExport, DatasetImport, DatasetVersion, EvaluationRun, IntegrationEvent, JobQueueRecord, JudgeCritique, ModelPerformanceSample, ModelResponse, RequestLog, RoutingDecisionRecord, TrainingCandidate, TrainingRun, VirtualAPIKey
 from app.integration.outbox import process_pending_events
 from app.operator_payloads import (
     dataset_export_payload,
@@ -36,7 +39,7 @@ from app.operator_payloads import (
 )
 from app.proxy.classifier import classify_request
 from app.proxy.router import select_route
-from app.registry.model_registry import get_provider_registry, list_provider_capabilities
+from app.registry.model_registry import get_provider_registry, list_provider_capabilities, resolve_provider
 from app.runtime import run_scheduler_iteration, run_worker_iteration
 from app.services.observability import build_operations_summary, log_record, tail_log_records
 from app.schemas.chat import ChatCompletionRequest
@@ -64,6 +67,61 @@ class StreamingValidationRequest(BaseModel):
     domain_hint: str = "general"
     task_type_hint: str = "analysis"
     max_chunks: int = 12
+
+
+class VirtualKeyCreateRequest(BaseModel):
+    display_name: str | None = None
+    owner_id: str | None = None
+    role: str = "api"
+    models_allowed: list[str] = []
+    max_budget_usd: float | None = None
+
+
+class VirtualKeyUpdateRequest(BaseModel):
+    display_name: str | None = None
+    owner_id: str | None = None
+    role: str | None = None
+    models_allowed: list[str] | None = None
+    max_budget_usd: float | None = None
+    status: str | None = None
+
+
+class VirtualKeyView(BaseModel):
+    id: str
+    key_prefix: str
+    display_name: str | None = None
+    owner_id: str | None = None
+    role: str
+    status: str
+    models_allowed: list[str]
+    spend_usd: float
+    max_budget_usd: float | None = None
+    last_used_at: str | None = None
+    created_at: str
+
+
+class VirtualKeyCreateResponse(VirtualKeyView):
+    token: str
+
+
+class VirtualKeyRotateResponse(VirtualKeyCreateResponse):
+    previous_key_prefix: str
+
+
+def _virtual_key_payload(item: VirtualAPIKey) -> dict[str, Any]:
+    return {
+        "id": item.id,
+        "key_prefix": item.key_prefix,
+        "display_name": item.display_name,
+        "owner_id": item.owner_id,
+        "role": item.role,
+        "status": item.status,
+        "models_allowed": [str(value) for value in (item.models_allowed_json or [])],
+        "spend_usd": float(item.spend_usd) if item.spend_usd is not None else 0.0,
+        "max_budget_usd": float(item.max_budget_usd) if item.max_budget_usd is not None else None,
+        "last_used_at": item.last_used_at.isoformat() if item.last_used_at else None,
+        "created_at": item.created_at.isoformat(),
+    }
 
 def _write_env_value(env_file: Path, key: str, value: str) -> None:
     lines: list[str] = []
@@ -103,7 +161,12 @@ def _streaming_route_examples(session: Session, settings: Settings) -> list[dict
         )
         classification = classify_request(request)
         route = select_route("req_admin_streaming_support", request, classification, settings, session=session)
-        provider = provider_registry.get(route.provider_key)
+        provider = resolve_provider(
+            settings,
+            provider_registry,
+            provider_key=route.provider_key,
+            entry=route.entry_index.get(route.provider_key),
+        )
         rows.append(
             {
                 **scenario,
@@ -130,6 +193,99 @@ def get_config(
     settings: Settings = Depends(get_runtime_settings),
 ) -> dict[str, Any]:
     return settings_payload(settings)
+
+
+@router.get("/api/auth/virtual-keys", response_model=list[VirtualKeyView], dependencies=[Depends(require_operator_token)])
+def list_virtual_keys(
+    session: Session = Depends(get_session),
+) -> list[VirtualKeyView]:
+    rows = session.execute(select(VirtualAPIKey).order_by(VirtualAPIKey.created_at.desc())).scalars().all()
+    return [VirtualKeyView.model_validate(_virtual_key_payload(item)) for item in rows]
+
+
+@router.post("/api/auth/virtual-keys", response_model=VirtualKeyCreateResponse, dependencies=[Depends(require_operator_token)])
+def create_virtual_key(
+    request: VirtualKeyCreateRequest,
+    session: Session = Depends(get_session),
+) -> VirtualKeyCreateResponse:
+    raw_token = f"sk-{token_urlsafe(24)}"
+    record = VirtualAPIKey(
+        id=f"vkey_{uuid4().hex}",
+        key_prefix=raw_token[:12],
+        key_hash=virtual_key_hash(raw_token),
+        display_name=request.display_name,
+        owner_id=request.owner_id,
+        role=request.role,
+        status="active",
+        models_allowed_json=request.models_allowed,
+        max_budget_usd=request.max_budget_usd,
+    )
+    session.add(record)
+    session.commit()
+    session.refresh(record)
+    payload = _virtual_key_payload(record)
+    payload["token"] = raw_token
+    return VirtualKeyCreateResponse.model_validate(payload)
+
+
+@router.post("/api/auth/virtual-keys/{key_id}/disable", response_model=VirtualKeyView, dependencies=[Depends(require_operator_token)])
+def disable_virtual_key(
+    key_id: str,
+    session: Session = Depends(get_session),
+) -> VirtualKeyView:
+    record = session.get(VirtualAPIKey, key_id)
+    if record is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Virtual API key not found.")
+    record.status = "disabled"
+    session.commit()
+    session.refresh(record)
+    return VirtualKeyView.model_validate(_virtual_key_payload(record))
+
+
+@router.patch("/api/auth/virtual-keys/{key_id}", response_model=VirtualKeyView, dependencies=[Depends(require_operator_token)])
+def update_virtual_key(
+    key_id: str,
+    request: VirtualKeyUpdateRequest,
+    session: Session = Depends(get_session),
+) -> VirtualKeyView:
+    record = session.get(VirtualAPIKey, key_id)
+    if record is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Virtual API key not found.")
+    if request.display_name is not None:
+        record.display_name = request.display_name
+    if request.owner_id is not None:
+        record.owner_id = request.owner_id
+    if request.role is not None:
+        record.role = request.role
+    if request.models_allowed is not None:
+        record.models_allowed_json = request.models_allowed
+    if request.max_budget_usd is not None:
+        record.max_budget_usd = request.max_budget_usd
+    if request.status is not None:
+        record.status = request.status
+    session.commit()
+    session.refresh(record)
+    return VirtualKeyView.model_validate(_virtual_key_payload(record))
+
+
+@router.post("/api/auth/virtual-keys/{key_id}/rotate", response_model=VirtualKeyRotateResponse, dependencies=[Depends(require_operator_token)])
+def rotate_virtual_key(
+    key_id: str,
+    session: Session = Depends(get_session),
+) -> VirtualKeyRotateResponse:
+    record = session.get(VirtualAPIKey, key_id)
+    if record is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Virtual API key not found.")
+    previous_key_prefix = str(record.key_prefix)
+    raw_token = f"sk-{token_urlsafe(24)}"
+    record.key_prefix = raw_token[:12]
+    record.key_hash = virtual_key_hash(raw_token)
+    session.commit()
+    session.refresh(record)
+    payload = _virtual_key_payload(record)
+    payload["token"] = raw_token
+    payload["previous_key_prefix"] = previous_key_prefix
+    return VirtualKeyRotateResponse.model_validate(payload)
 
 
 @router.get("/api/proxy/streaming-support", dependencies=[Depends(require_api_token)])

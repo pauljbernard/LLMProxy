@@ -11,6 +11,7 @@ import uvicorn
 from app.config import get_settings
 from app.db.models import EvaluationRun, JobQueueRecord, TrainingRun
 from app.db.session import get_engine, get_session_factory
+from app.deployment.manager import deploy_model
 from app.integration.improvement import build_retraining_plan, record_teacher_comparison_sample
 from app.integration.jobs import claim_next_job_for_lane, enqueue_kpi_report_job, mark_job_completed, mark_job_failed
 from app.integration.outbox import process_pending_events
@@ -18,6 +19,7 @@ from app.integration.performance import generate_kpi_report
 from app.datasets.ingestion import import_dataset
 from app.evaluation.runner import execute_evaluation_run
 from app.schemas.dataset import DatasetImportRequest
+from app.schemas.integration import DeploymentRequest
 from app.services.observability import log_record
 from app.training.orchestrator import execute_training_run
 
@@ -169,6 +171,18 @@ def run_worker_iteration(
             execute_evaluation_run(
                 session,
                 evaluation_run_id=str(job.payload_json["evaluation_run_id"]),
+                settings=settings,
+            )
+        elif job.job_type == "deployment.activate":
+            deploy_model(
+                session,
+                model_alias=str(job.payload_json["model_alias"]),
+                request=DeploymentRequest(
+                    deployment_mode=str(job.payload_json["deployment_mode"]),
+                    domains=[str(item) for item in job.payload_json.get("domains", [])] or None,
+                    task_types=[str(item) for item in job.payload_json.get("task_types", [])] or None,
+                    canary_percent=float(job.payload_json.get("canary_percent", 0.0)),
+                ),
                 settings=settings,
             )
         else:

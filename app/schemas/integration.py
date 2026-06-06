@@ -1,5 +1,6 @@
 """Integration event schemas."""
 
+from app.schemas.routing import FallbackTarget
 from pydantic import BaseModel
 
 
@@ -30,6 +31,25 @@ class RoutingPolicyVersionView(BaseModel):
     id: str
     policy_version: str
     policy: dict[str, object]
+
+
+class FrontierPolicyEntryRequest(BaseModel):
+    entry_id: str | None = None
+    provider_key: str
+    model_id: str
+    domains: list[str]
+    task_types: list[str] | None = None
+    deployment_mode: str = "production"
+    canary_percent: float = 0.0
+    endpoint_url: str | None = None
+    fallback_chain: list[FallbackTarget] | None = None
+    decision_rationale: str | None = None
+
+
+class RoutingPolicyEntryMutationResponse(BaseModel):
+    entry_id: str
+    policy_version: str
+    action: str
 
 
 class OutboxProcessResponse(BaseModel):

@@ -123,6 +123,54 @@ def test_run_worker_iteration_processes_evaluation_jobs() -> None:
     assert kwargs["evaluation_run_id"] == "eval_1"
 
 
+def test_run_worker_iteration_processes_deployment_jobs() -> None:
+    job = type(
+        "Job",
+        (),
+        {
+            "id": "job_1",
+            "job_type": "deployment.activate",
+            "payload_json": {
+                "model_alias": "coding-lora-v1",
+                "deployment_mode": "production",
+                "domains": ["coding"],
+                "task_types": ["code_review"],
+            },
+            "status": "pending",
+            "attempts": 0,
+            "max_attempts": 3,
+            "claimed_at": None,
+            "completed_at": None,
+            "last_error": None,
+        },
+    )()
+
+    class ClaimSession:
+        commit_count = 0
+
+        def commit(self) -> None:
+            self.commit_count += 1
+
+        def close(self) -> None:
+            return None
+
+        def rollback(self) -> None:
+            return None
+
+    claim_session = ClaimSession()
+
+    with patch("app.runtime.get_session_factory", return_value=lambda: claim_session):
+        with patch("app.runtime.claim_next_job_for_lane", return_value=job):
+            with patch("app.runtime.deploy_model") as deploy_model:
+                deploy_model.return_value = None
+                assert run_worker_iteration() is True
+
+    assert claim_session.commit_count == 1
+    _, kwargs = deploy_model.call_args
+    assert kwargs["model_alias"] == "coding-lora-v1"
+    assert kwargs["request"].deployment_mode == "production"
+
+
 def test_run_worker_iteration_passes_job_lane_filters() -> None:
     fake_session = type(
         "FakeSession",

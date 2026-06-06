@@ -18,6 +18,7 @@ from app.db.models import (
     ModelPerformanceSample,
     RequestLog,
 )
+from app.services.provider_health import provider_health_snapshot
 
 OPS_LOG_FILE = "operations.jsonl"
 
@@ -178,6 +179,7 @@ def build_operations_summary(session: Session, *, settings: Settings) -> dict[st
     latest_request = requests[0].id if requests else None
     latest_evaluation = evaluations[0].id if evaluations else None
     streaming = build_streaming_telemetry(settings)
+    provider_health = provider_health_snapshot()
 
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -191,6 +193,7 @@ def build_operations_summary(session: Session, *, settings: Settings) -> dict[st
         "latest_request_id": latest_request,
         "latest_evaluation_run_id": latest_evaluation,
         "streaming": streaming,
+        "provider_health": provider_health,
         "provider_configuration": {
             "openai": bool(settings.llmproxy_openai_api_key),
             "anthropic": bool(settings.llmproxy_anthropic_api_key),

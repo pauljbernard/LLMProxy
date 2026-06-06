@@ -193,6 +193,23 @@
               <pre id="model-register-output" class="output"></pre>
             </div>
             <div class="card">
+              <h3>Frontier Policy Entry</h3>
+              <form id="frontier-policy-form" class="stack">
+                <input name="entry_id" type="hidden" />
+                <div class="form-inline"><input name="provider_key" placeholder="openai" required /><input name="model_id" placeholder="gpt-5.5" required /></div>
+                <div class="form-inline"><input name="domains" placeholder="research,analysis" required /><input name="task_types" placeholder="analysis,design_review" /></div>
+                <div class="form-inline"><select name="deployment_mode"><option>shadow</option><option>canary</option><option selected>production</option></select><input name="canary_percent" placeholder="0.0" value="0.0" /></div>
+                <input name="endpoint_url" placeholder="optional endpoint/base url override" />
+                <input name="fallback_chain" placeholder="openai:gpt-5.5,google:gemini-2.5-pro" />
+                <input name="decision_rationale" placeholder="optional routing rationale" />
+                <div class="inline-actions">
+                  <button class="button accent" type="submit">Save Frontier Entry</button>
+                  <button class="button ghost" id="frontier-policy-reset" type="button">Clear</button>
+                </div>
+              </form>
+              <pre id="frontier-policy-output" class="output"></pre>
+            </div>
+            <div class="card">
               <h3>Deploy / Roll Back</h3>
               <form id="deploy-form" class="stack">
                 <div class="form-inline"><input name="model_alias" placeholder="model alias" required /><select name="deployment_mode"><option>shadow</option><option>canary</option><option selected>production</option></select></div>
@@ -206,6 +223,23 @@
               </form>
               <pre id="deploy-output" class="output"></pre>
             </div>
+          </div>
+          <div class="card">
+            <h3>Automation Controls</h3>
+            <form id="automation-form" class="stack">
+              <div class="form-inline">
+                <label><input name="auto_deploy_approved_evaluations" type="checkbox" /> Auto-deploy approved evaluations</label>
+                <select name="auto_deploy_deployment_mode">
+                  <option>shadow</option>
+                  <option>canary</option>
+                  <option selected>production</option>
+                </select>
+              </div>
+              <div class="inline-actions">
+                <button class="button accent" type="submit">Save Automation Settings</button>
+              </div>
+            </form>
+            <pre id="automation-output" class="output"></pre>
           </div>
         </section>
 
