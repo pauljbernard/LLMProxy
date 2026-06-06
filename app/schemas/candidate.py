@@ -11,7 +11,7 @@ class TrainingCandidateView(BaseModel):
     domain: str
     task_type: str
     status: str
-    quality_score: float
+    quality_score: float | None
     approval_status: str
     export_eligible: bool
     selected_response: str

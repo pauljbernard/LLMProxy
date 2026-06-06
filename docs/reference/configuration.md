@@ -15,6 +15,8 @@ This is the practical published reference for the most important `llmProxy` envi
 | `LLMPROXY_DATABASE_WAIT_TIMEOUT_SECONDS` | DB startup wait | `30` |
 | `LLMPROXY_RUN_MIGRATIONS_ON_START` | Run Alembic on API startup | `true` |
 | `LLMPROXY_PROVIDER_TIMEOUT_SECONDS` | Provider call timeout | `60.0` |
+| `LLMPROXY_TRAINING_BACKEND_TIMEOUT_SECONDS` | training command timeout | `14400` |
+| `LLMPROXY_EVALUATION_TIMEOUT_SECONDS` | evaluation command timeout | `3600` |
 
 ## Auth
 
@@ -52,6 +54,18 @@ This is the practical published reference for the most important `llmProxy` envi
 | `LLMPROXY_AZURE_OPENAI_MODEL` | logical Azure model |
 | `LLMPROXY_OLLAMA_BASE_URL` | Ollama endpoint |
 | `LLMPROXY_OLLAMA_MODEL` | default Ollama model |
+
+## Training and evaluation backends
+
+| Variable | Purpose |
+|---|---|
+| `LLMPROXY_LORA_TRAINER_COMMAND` | command used for LoRA backend execution |
+| `LLMPROXY_QLORA_TRAINER_COMMAND` | command used for QLoRA backend execution |
+| `LLMPROXY_EVALUATION_COMMAND` | command used for benchmark evaluation execution |
+
+See:
+
+- [Backend Command Integration](../guides/backend-command-integration.md)
 
 ## Storage paths
 

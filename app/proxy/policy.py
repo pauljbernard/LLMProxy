@@ -2,17 +2,12 @@
 
 from app.schemas.routing import FallbackTarget, RankedAlternative, RoutingDecision
 
-POLICY_VERSION = "1.0.0"
-
-
-def policy_version() -> str:
-    return POLICY_VERSION
-
 
 def build_routing_decision(
     *,
     request_id: str,
     session_id: str,
+    policy_version: str,
     selected_provider: str,
     selected_provider_family: str,
     selected_model: str,
@@ -27,7 +22,7 @@ def build_routing_decision(
         routing_decision_id=f"route_{request_id.split('_', 1)[-1]}",
         session_id=session_id,
         request_id=request_id,
-        policy_version=policy_version(),
+        policy_version=policy_version,
         selected_provider=selected_provider,
         selected_provider_family=selected_provider_family,
         selected_model=selected_model,

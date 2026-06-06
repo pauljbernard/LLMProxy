@@ -64,10 +64,6 @@ def _select_embedding_provider(
         capability = getattr(provider, "capability", None)
         if capability is not None and capability.supports_embeddings and capability.model_id == request.model:
             return provider
-    for provider in provider_registry.values():
-        capability = getattr(provider, "capability", None)
-        if capability is not None and capability.supports_embeddings:
-            return provider
     raise HTTPException(
         status_code=status.HTTP_501_NOT_IMPLEMENTED,
         detail="No embedding provider is configured for this request.",
@@ -183,7 +179,7 @@ async def _persist_selected_response_async(
                 session_id=request.metadata.session_id,
                 domain=classification["domain"],
                 task_type=classification["task_type"],
-                quality_score=0.82 if provider_result["provider"] == "ollama" else 0.86,
+                quality_score=None,
                 selected_response=str(provider_result["content"]),
                 messages=[message.model_dump(mode="json") for message in request.messages],
                 provenance={

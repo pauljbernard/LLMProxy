@@ -60,6 +60,22 @@ After a successful run, you should see:
 - model package under `/data/models`
 - evaluation and KPI information available through the admin console and APIs
 
+## Real backend note
+
+Training and evaluation now support command-backed execution.
+
+Before expecting a real successful training/evaluation cycle, configure:
+
+- `LLMPROXY_LORA_TRAINER_COMMAND` or `LLMPROXY_QLORA_TRAINER_COMMAND`
+- `LLMPROXY_EVALUATION_COMMAND`
+
+If those are not configured, the queued lifecycle still works, but the worker
+or evaluation endpoint will fail honestly rather than fabricating results.
+
+For the exact JSON contract and smoke-test adapters, see:
+
+- [Backend Command Integration](./backend-command-integration.md)
+
 ## Where the records live
 
 - candidates and exports: `proxy` schema

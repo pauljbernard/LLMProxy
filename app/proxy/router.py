@@ -4,7 +4,7 @@ from hashlib import sha256
 from typing import NamedTuple
 
 from app.config import Settings
-from app.integration.routing_policy import get_latest_policy
+from app.integration.routing_policy import get_latest_policy_record
 from app.proxy.policy import build_routing_decision
 from app.schemas.chat import ChatCompletionRequest
 from app.schemas.routing import FallbackTarget, RankedAlternative, RoutingDecision
@@ -110,6 +110,7 @@ def _route_from_policy(
     *,
     request_id: str,
     session_id: str,
+    policy_version: str,
     selected_entry: dict[str, object],
     shadow_entries: list[dict[str, object]],
     complexity: str,
@@ -138,6 +139,7 @@ def _route_from_policy(
         decision=build_routing_decision(
             request_id=request_id,
             session_id=session_id,
+            policy_version=policy_version,
             selected_provider="ollama" if provider_key.startswith("local:") else provider_key,
             selected_provider_family=provider_family,
             selected_model=selected_model,
@@ -163,7 +165,13 @@ def select_route(
     task_type = classification["task_type"]
     privacy_level = classification["privacy_level"]
     complexity = classification["complexity"]
-    policy = get_latest_policy(session)
+    policy_record = get_latest_policy_record(session)
+    if policy_record is None:
+        policy = {"entries": []}
+        resolved_policy_version = "unversioned"
+    else:
+        policy = dict(policy_record.policy_json)
+        resolved_policy_version = policy_record.policy_version
     production_entries, canary_entries, shadow_entries = _match_policy_entries(
         policy,
         domain=domain,
@@ -186,18 +194,14 @@ def select_route(
         predicted_latency_class = "medium" if complexity == "high" else "low"
         ranked_alternatives = [
             RankedAlternative(rank=1, provider="ollama", model=settings.llmproxy_ollama_model, score=0.93),
-            RankedAlternative(rank=2, provider="openai", model=settings.llmproxy_openai_model, score=0.90),
-            RankedAlternative(rank=3, provider="anthropic", model=settings.llmproxy_anthropic_model, score=0.87),
         ]
-        fallback_chain = [
-            FallbackTarget(order=1, provider="openai", model=settings.llmproxy_openai_model),
-            FallbackTarget(order=2, provider="anthropic", model=settings.llmproxy_anthropic_model),
-        ]
+        fallback_chain: list[FallbackTarget] = []
         return SelectedRoute(
             provider_key=provider_key,
             decision=build_routing_decision(
                 request_id=request_id,
                 session_id=request.metadata.session_id,
+                policy_version=resolved_policy_version,
                 selected_provider=provider_key,
                 selected_provider_family=provider_family,
                 selected_model=model_id,
@@ -227,6 +231,7 @@ def select_route(
         return _route_from_policy(
             request_id=request_id,
             session_id=request.metadata.session_id,
+            policy_version=resolved_policy_version,
             selected_entry=selected_local_entry,
             shadow_entries=shadow_entries,
             complexity=complexity,
@@ -291,6 +296,7 @@ def select_route(
         decision=build_routing_decision(
             request_id=request_id,
             session_id=request.metadata.session_id,
+            policy_version=resolved_policy_version,
             selected_provider="ollama" if provider_key.startswith("local:") else provider_key,
             selected_provider_family=provider_family,
             selected_model=model_id,

@@ -19,7 +19,7 @@ def capture_training_candidate(
     session_id: str,
     domain: str,
     task_type: str,
-    quality_score: float,
+    quality_score: float | None,
     selected_response: str,
     messages: list[dict[str, object]],
     provenance: dict[str, object],

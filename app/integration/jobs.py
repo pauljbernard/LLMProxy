@@ -130,6 +130,7 @@ def claim_next_job(session: Session) -> JobQueueRecord | None:
             JobQueueRecord.available_at <= now,
         )
         .order_by(JobQueueRecord.created_at.asc())
+        .with_for_update(skip_locked=True)
     ).scalars().first()
     if job is None:
         return None

@@ -94,7 +94,7 @@ class TrainingCandidate(Base):
     domain: Mapped[str] = mapped_column(String)
     task_type: Mapped[str] = mapped_column(String)
     status: Mapped[str] = mapped_column(String)
-    quality_score: Mapped[float] = mapped_column(Float)
+    quality_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     approval_status: Mapped[str] = mapped_column(String)
     export_eligible: Mapped[bool] = mapped_column(Boolean, default=False)
     selected_response: Mapped[str] = mapped_column(Text)

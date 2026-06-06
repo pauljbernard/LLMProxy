@@ -61,3 +61,33 @@ def test_export_candidates_writes_jsonl_and_manifest(tmp_path: Path) -> None:
     assert Path(response.manifest_path).exists()
     assert candidate.status == "exported"
     assert len(session.added) == 2
+
+
+def test_export_candidates_allows_approved_unscored_candidates_at_default_threshold(tmp_path: Path) -> None:
+    candidate = TrainingCandidate(
+        id="cand_1",
+        request_log_id="req_1",
+        routing_decision_id="route_1",
+        session_id="sess_1",
+        domain="coding",
+        task_type="code_review",
+        status="approved",
+        quality_score=None,
+        approval_status="approved",
+        export_eligible=True,
+        selected_response="Use the smaller patch.",
+        messages_json=[{"role": "user", "content": "Review patch"}],
+        provenance_json={"source": "frontier_single"},
+        validation_json={"validated": True},
+        metadata_json={"task_type": "code_review"},
+    )
+    session = FakeSession([candidate])
+    settings = Settings(llmproxy_exports_path=str(tmp_path))
+
+    response = export_candidates(
+        session,
+        request=DatasetExportRequest(domain="coding"),
+        settings=settings,
+    )
+
+    assert response.record_count == 1

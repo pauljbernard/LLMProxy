@@ -7,7 +7,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.config import Settings
@@ -50,13 +50,21 @@ def export_candidates(
     request: DatasetExportRequest,
     settings: Settings,
 ) -> DatasetExportResponse:
+    quality_filter = (
+        or_(
+            TrainingCandidate.quality_score.is_(None),
+            TrainingCandidate.quality_score >= request.min_quality_score,
+        )
+        if request.min_quality_score <= 0.0
+        else TrainingCandidate.quality_score >= request.min_quality_score
+    )
     candidates = list(
         session.execute(
             select(TrainingCandidate).where(
                 TrainingCandidate.domain == request.domain,
                 TrainingCandidate.approval_status == "approved",
                 TrainingCandidate.export_eligible.is_(True),
-                TrainingCandidate.quality_score >= request.min_quality_score,
+                quality_filter,
             )
         ).scalars()
     )

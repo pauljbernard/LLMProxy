@@ -1,6 +1,6 @@
 """Database session helpers."""
 
-from collections.abc import Generator
+from collections.abc import AsyncGenerator, Generator
 from functools import lru_cache
 
 from sqlalchemy import create_engine
@@ -66,7 +66,7 @@ def get_db_session() -> Generator[Session, None, None]:
         session.close()
 
 
-async def get_async_db_session() -> Generator[AsyncSession, None, None]:
+async def get_async_db_session() -> AsyncGenerator[AsyncSession, None]:
     session = get_async_session_factory()()
     try:
         yield session

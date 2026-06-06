@@ -96,6 +96,10 @@ def execute_training_run(
     training_run = session.get(TrainingRun, training_run_id)
     if training_run is None:
         raise ValueError(f"Training run '{training_run_id}' was not found.")
+    if training_run.status == "completed":
+        return training_run
+    if training_run.status == "running":
+        raise RuntimeError(f"Training run '{training_run_id}' is already running.")
     dataset_version = session.get(DatasetVersion, training_run.dataset_version_id)
     if dataset_version is None:
         raise ValueError(f"Dataset version '{training_run.dataset_version_id}' was not found.")
@@ -116,9 +120,17 @@ def execute_training_run(
     session.flush()
     try:
         if training_run.training_mode == "lora":
-            trainer_result = run_lora(artifact_dir=artifact_dir, training_config=training_config)
+            trainer_result = run_lora(
+                artifact_dir=artifact_dir,
+                training_config=training_config,
+                settings=settings,
+            )
         elif training_run.training_mode == "qlora":
-            trainer_result = run_qlora(artifact_dir=artifact_dir, training_config=training_config)
+            trainer_result = run_qlora(
+                artifact_dir=artifact_dir,
+                training_config=training_config,
+                settings=settings,
+            )
         else:
             raise ValueError(f"Unsupported training mode '{training_run.training_mode}'.")
     except Exception as exc:

@@ -13,10 +13,10 @@ from app.db.models import DatasetVersion, EvaluationRun, TrainingRun
 from app.evaluation.benchmark_loader import load_benchmarks
 from app.evaluation.economics import compare_value_per_dollar
 from app.evaluation.gates import evaluate_promotion_gate
-from app.evaluation.judge import judge_benchmark_output
 from app.integration.events import emit_event
 from app.proxy.recorder import generate_prefixed_id
 from app.registry.artifact_store import store_artifact
+from app.services.command_backend import run_json_command
 from app.schemas.evaluation import EvaluationResult, EvaluationRunRequest
 
 BASELINE_BY_DOMAIN = {
@@ -71,10 +71,10 @@ def run_evaluation(
     dataset_version = session.get(DatasetVersion, training_run.dataset_version_id)
     if dataset_version is None:
         raise ValueError(f"Dataset version '{training_run.dataset_version_id}' was not found.")
-
-    raise NotImplementedError(
-        "Real benchmark execution is not configured. Blocked to prevent fabricated evaluation scores and promotions."
-    )
+    if not settings.llmproxy_evaluation_command:
+        raise NotImplementedError(
+            "Real benchmark execution is not configured. Set LLMPROXY_EVALUATION_COMMAND to a command that reads benchmark JSON from stdin and emits JSON scores."
+        )
 
     benchmark_bundle = load_benchmarks(dataset_version.domain)
     benchmark_manifest = benchmark_bundle["manifest"]
@@ -87,13 +87,33 @@ def run_evaluation(
     frontier_score = frontier_baseline_score(dataset_version.domain)
     frontier_cost = frontier_baseline_cost(dataset_version.domain)
     local_cost = LOCAL_RUNTIME_COST_BY_MODE.get(training_run.training_mode, 0.03)
-
-    overall_score = judge_benchmark_output(
-        domain=dataset_version.domain,
-        training_mode=training_run.training_mode,
-        dataset_record_count=dataset_version.record_count,
-        benchmark_record_count=len(benchmark_records),
+    evaluation_backend_result = run_json_command(
+        command=settings.llmproxy_evaluation_command,
+        payload={
+            "training_run": {
+                "id": training_run.id,
+                "dataset_version_id": training_run.dataset_version_id,
+                "base_model": training_run.base_model,
+                "training_mode": training_run.training_mode,
+                "artifact_path": training_run.artifact_path,
+                "training_config": training_run.training_config_json,
+                "metrics": training_run.metrics_json,
+            },
+            "dataset_version": {
+                "id": dataset_version.id,
+                "domain": dataset_version.domain,
+                "record_count": dataset_version.record_count,
+                "train_path": dataset_version.train_path,
+                "validation_path": dataset_version.validation_path,
+                "test_path": dataset_version.test_path,
+            },
+            "benchmark_manifest": benchmark_manifest,
+            "benchmark_records": benchmark_records,
+            "frontier_baseline_name": baseline_name,
+        },
+        timeout_seconds=settings.llmproxy_evaluation_timeout_seconds,
     )
+    overall_score = float(evaluation_backend_result["overall_score"])
     quality_delta_vs_frontier = round(frontier_score - overall_score, 4)
     value_per_dollar_gain_vs_frontier = compare_value_per_dollar(
         local_score=overall_score,
@@ -110,6 +130,7 @@ def run_evaluation(
 
     evaluation_run_id = generate_prefixed_id("eval")
     package_dir = Path(settings.llmproxy_models_path) / training_run.id
+    package_metadata = dict(evaluation_backend_result.get("package_metadata") or {})
     package_manifest = {
         "package_version": "1.0",
         "model_registry_id": f"model_{training_run.id}",
@@ -117,9 +138,9 @@ def run_evaluation(
         "base_model": training_run.base_model,
         "adapter_type": training_run.training_mode,
         "artifact_format": "adapter-binary",
-        "artifact_paths": [training_run.artifact_path],
-        "domains": [dataset_version.domain],
-        "task_types": [dataset_version.domain],
+        "artifact_paths": package_metadata.get("artifact_paths") or [training_run.artifact_path],
+        "domains": package_metadata.get("domains") or [dataset_version.domain],
+        "task_types": package_metadata.get("task_types") or [dataset_version.domain],
         "quality_summary": {
             "overall_score": overall_score,
             "domain_scores": {dataset_version.domain: overall_score},
@@ -131,7 +152,7 @@ def run_evaluation(
             "model_contract_version": "1.0",
             "learner_version": "0.1.0",
             "compatible_proxy_versions": ["0.1.0"],
-            "runtime_targets": ["ollama"],
+            "runtime_targets": package_metadata.get("runtime_targets") or ["ollama"],
         },
         "provenance": {
             "training_run_id": training_run.id,
@@ -153,6 +174,7 @@ def run_evaluation(
         "frontier_baseline_score": frontier_score,
         "frontier_baseline_cost": frontier_cost,
         "local_runtime_cost": local_cost,
+        "backend_result": evaluation_backend_result,
         "promotion_status": promotion_status,
         "gate_failures": gate_failures,
         "package_manifest_path": package_manifest_path,
