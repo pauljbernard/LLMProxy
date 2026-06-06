@@ -17,6 +17,11 @@ This is the practical published reference for the most important `llmProxy` envi
 | `LLMPROXY_PROVIDER_TIMEOUT_SECONDS` | Provider call timeout | `60.0` |
 | `LLMPROXY_TRAINING_BACKEND_TIMEOUT_SECONDS` | training command timeout | `14400` |
 | `LLMPROXY_EVALUATION_TIMEOUT_SECONDS` | evaluation command timeout | `3600` |
+| `LLMPROXY_WORKER_INCLUDE_JOB_TYPES` | optional comma-separated worker lane include filter | unset |
+| `LLMPROXY_WORKER_EXCLUDE_JOB_TYPES` | optional comma-separated worker lane exclude filter | unset |
+| `LLMPROXY_FRONTIER_BASELINE_NAMES` | JSON map of domain to baseline model name | built-in defaults |
+| `LLMPROXY_FRONTIER_BASELINE_SCORES` | JSON map of domain to baseline quality score | built-in defaults |
+| `LLMPROXY_FRONTIER_BASELINE_COSTS` | JSON map of domain to baseline cost estimate | built-in defaults |
 
 ## Auth
 

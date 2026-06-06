@@ -1,6 +1,7 @@
 """Google Gemini provider implementation."""
 
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
+import json
 
 from app.config import Settings
 from app.providers.base import BaseProvider
@@ -11,6 +12,7 @@ class GoogleProvider(BaseProvider):
     provider_family = "Google Gemini"
     provider_name = "google"
     price_per_token = 0.000018
+    supports_streaming = True
 
     def __init__(
         self,
@@ -97,3 +99,35 @@ class GoogleProvider(BaseProvider):
             "cost_estimate": cost_estimate,
             "raw_response": raw_response,
         }
+
+    async def stream_chat(self, request: ChatCompletionRequest) -> AsyncIterator[dict[str, object]]:
+        api_key = self._require_config(self.api_key, field_name="llmproxy_google_api_key")
+        payload = {
+            "contents": self._request_contents(request.messages),
+            "generationConfig": {
+                "temperature": request.temperature,
+                "maxOutputTokens": request.max_tokens,
+            },
+        }
+        async with self._client(base_url=self.base_url) as client:
+            async with client.stream(
+                "POST",
+                f"/models/{self.model_id}:streamGenerateContent",
+                params={"key": api_key, "alt": "sse"},
+                json=payload,
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line or not line.startswith("data: "):
+                        continue
+                    raw_chunk = json.loads(line[6:].strip())
+                    candidate = (raw_chunk.get("candidates") or [{}])[0]
+                    usage = raw_chunk.get("usageMetadata") or {}
+                    yield {
+                        "model": str(raw_chunk.get("modelVersion", self.model_id)),
+                        "delta": self._extract_content(candidate),
+                        "finish_reason": str(candidate.get("finishReason")).lower() if candidate.get("finishReason") else None,
+                        "input_tokens": int(usage.get("promptTokenCount", 0)),
+                        "output_tokens": int(usage.get("candidatesTokenCount", 0)),
+                        "raw_chunk": raw_chunk,
+                    }

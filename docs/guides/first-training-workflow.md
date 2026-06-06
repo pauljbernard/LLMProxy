@@ -76,6 +76,12 @@ For the exact JSON contract and smoke-test adapters, see:
 
 - [Backend Command Integration](./backend-command-integration.md)
 
+## Worker note
+
+In the default Compose deployment, long-running training jobs are intended to
+run on the dedicated `training-worker` service so they do not monopolize the
+general operational worker.
+
 ## Where the records live
 
 - candidates and exports: `proxy` schema

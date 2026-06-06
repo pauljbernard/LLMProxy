@@ -146,7 +146,7 @@ class DatasetVersion(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True)
     domain: Mapped[str] = mapped_column(String)
     version_name: Mapped[str] = mapped_column(String)
-    source_import_id: Mapped[str] = mapped_column(String)
+    source_import_id: Mapped[str] = mapped_column(ForeignKey("learner.dataset_import.id"), index=True)
     train_path: Mapped[str] = mapped_column(String)
     validation_path: Mapped[str] = mapped_column(String)
     test_path: Mapped[str] = mapped_column(String)
@@ -159,7 +159,7 @@ class TrainingRun(Base):
     __table_args__ = {"schema": "learner"}
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    dataset_version_id: Mapped[str] = mapped_column(String)
+    dataset_version_id: Mapped[str] = mapped_column(ForeignKey("learner.dataset_version.id"), index=True)
     base_model: Mapped[str] = mapped_column(String)
     training_mode: Mapped[str] = mapped_column(String)
     status: Mapped[str] = mapped_column(String)
@@ -175,7 +175,7 @@ class EvaluationRun(Base):
     __table_args__ = {"schema": "learner"}
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    training_run_id: Mapped[str] = mapped_column(String)
+    training_run_id: Mapped[str] = mapped_column(ForeignKey("learner.training_run.id"), index=True)
     domain: Mapped[str] = mapped_column(String)
     frontier_baseline_name: Mapped[str] = mapped_column(String)
     overall_score: Mapped[float] = mapped_column(Float)

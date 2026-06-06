@@ -1,7 +1,7 @@
 """Base provider adapter."""
 
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from time import perf_counter
 
 import httpx
@@ -18,6 +18,7 @@ class BaseProvider(ABC):
     provider_family: str
     provider_name: str
     model_id: str
+    supports_streaming: bool = False
     supports_embeddings: bool = False
 
     def __init__(
@@ -37,7 +38,7 @@ class BaseProvider(ABC):
             provider_family=self.provider_family,
             provider_name=self.provider_name,
             model_id=self.model_id,
-            supports_streaming=True,
+            supports_streaming=self.supports_streaming,
             supports_embeddings=self.supports_embeddings,
             supports_tools=False,
             max_context_tokens=128_000,
@@ -90,6 +91,9 @@ class BaseProvider(ABC):
     @abstractmethod
     async def chat(self, request: ChatCompletionRequest) -> dict[str, object]:
         raise NotImplementedError
+
+    async def stream_chat(self, request: ChatCompletionRequest) -> AsyncIterator[dict[str, object]]:
+        raise NotImplementedError(f"{self.provider_name} does not support streaming chat.")
 
     async def embed(
         self,

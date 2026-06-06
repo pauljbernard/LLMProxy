@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
 from app.config import Settings
@@ -15,6 +15,7 @@ class BedrockProvider(BaseProvider):
     provider_family = "AWS Bedrock"
     provider_name = "bedrock"
     price_per_token = 0.000023
+    supports_streaming = True
 
     def __init__(
         self,
@@ -131,3 +132,48 @@ class BedrockProvider(BaseProvider):
             "cost_estimate": cost_estimate,
             "raw_response": raw_response,
         }
+
+    async def stream_chat(self, request: ChatCompletionRequest) -> AsyncIterator[dict[str, object]]:
+        client = self._client()
+        payload = {
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": request.max_tokens,
+            "temperature": request.temperature,
+            "messages": self._request_messages(request.messages),
+        }
+        response = client.invoke_model_with_response_stream(
+            modelId=self.model_id,
+            contentType="application/json",
+            accept="application/json",
+            body=json.dumps(payload).encode("utf-8"),
+        )
+        stream = response.get("body", [])
+        for event in stream:
+            chunk = event.get("chunk", {}) if isinstance(event, dict) else {}
+            raw_bytes = chunk.get("bytes", b"")
+            if isinstance(raw_bytes, str):
+                raw_payload = raw_bytes
+            else:
+                raw_payload = raw_bytes.decode("utf-8")
+            raw_chunk = json.loads(raw_payload)
+            chunk_type = raw_chunk.get("type")
+            usage = raw_chunk.get("usage") or {}
+            delta = ""
+            finish_reason = None
+            if chunk_type == "content_block_delta":
+                delta_obj = raw_chunk.get("delta") or {}
+                if delta_obj.get("type") == "text_delta":
+                    delta = str(delta_obj.get("text", ""))
+            elif chunk_type == "message_delta":
+                delta_obj = raw_chunk.get("delta") or {}
+                finish_reason = delta_obj.get("stop_reason")
+            elif chunk_type == "message_stop":
+                finish_reason = "stop"
+            yield {
+                "model": str(raw_chunk.get("model", self.model_id)),
+                "delta": delta,
+                "finish_reason": finish_reason,
+                "input_tokens": int(usage.get("input_tokens", 0)),
+                "output_tokens": int(usage.get("output_tokens", 0)),
+                "raw_chunk": raw_chunk,
+            }

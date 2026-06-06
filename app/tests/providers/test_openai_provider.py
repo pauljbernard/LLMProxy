@@ -71,3 +71,35 @@ def test_openai_provider_requires_api_key() -> None:
 
     with pytest.raises(ProviderConfigurationError):
         asyncio.run(provider.chat(_request()))
+
+
+def test_openai_provider_streams_chat_chunks() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode("utf-8"))
+        assert payload["stream"] is True
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"id":"chatcmpl_123","model":"gpt-5.5","choices":[{"delta":{"content":"Patch "},"finish_reason":null}]}\n\n'
+                'data: {"id":"chatcmpl_123","model":"gpt-5.5","choices":[{"delta":{"content":"summary."},"finish_reason":"stop"}],"usage":{"prompt_tokens":11,"completion_tokens":2}}\n\n'
+                "data: [DONE]\n\n"
+            ),
+        )
+
+    provider = OpenAIProvider(
+        "gpt-5.5",
+        api_key="test-openai-key",
+        base_url="https://api.openai.com/v1",
+        transport=httpx.MockTransport(handler),
+    )
+
+    chunks = asyncio.run(_collect(provider.stream_chat(_request())))
+
+    assert [chunk["delta"] for chunk in chunks] == ["Patch ", "summary."]
+    assert chunks[-1]["finish_reason"] == "stop"
+    assert chunks[-1]["input_tokens"] == 11
+    assert chunks[-1]["output_tokens"] == 2
+
+
+async def _collect(stream) -> list[dict[str, object]]:
+    return [chunk async for chunk in stream]

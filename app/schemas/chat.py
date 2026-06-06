@@ -14,6 +14,7 @@ class RequestMetadata(BaseModel):
     session_id: str
     domain_hint: str | None = None
     task_type_hint: str | None = None
+    privacy_hint: bool | None = None
 
 
 class ChatCompletionRequest(BaseModel):

@@ -4,7 +4,7 @@ Bring older 0001-baseline databases forward to the current schema without
 requiring destructive volume resets.
 """
 
-from alembic import op
+from alembic import context, op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
@@ -16,6 +16,9 @@ depends_on = None
 
 
 def _create_table_if_missing(schema: str, table: str, *columns: sa.Column, foreign_keys: tuple[sa.ForeignKeyConstraint, ...] = ()) -> None:
+    if context.is_offline_mode():
+        op.create_table(table, *columns, *foreign_keys, schema=schema)
+        return
     bind = op.get_bind()
     inspector = sa.inspect(bind)
     existing_tables = set(inspector.get_table_names(schema=schema))
@@ -25,6 +28,9 @@ def _create_table_if_missing(schema: str, table: str, *columns: sa.Column, forei
 
 
 def _create_index_if_missing(index_name: str, table_name: str, columns: list[str], *, schema: str) -> None:
+    if context.is_offline_mode():
+        op.create_index(index_name, table_name, columns, schema=schema)
+        return
     bind = op.get_bind()
     inspector = sa.inspect(bind)
     existing_indexes = {index["name"] for index in inspector.get_indexes(table_name, schema=schema)}

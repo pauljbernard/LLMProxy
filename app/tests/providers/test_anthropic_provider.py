@@ -62,3 +62,38 @@ def test_anthropic_provider_requires_api_key() -> None:
 
     with pytest.raises(ProviderConfigurationError):
         asyncio.run(provider.chat(_request()))
+
+
+def test_anthropic_provider_streams_message_chunks() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode("utf-8"))
+        assert payload["stream"] is True
+        return httpx.Response(
+            200,
+            text=(
+                'event: content_block_delta\n'
+                'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Anthropic "}}\n\n'
+                'event: content_block_delta\n'
+                'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"stream."}}\n\n'
+                'event: message_delta\n'
+                'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":15,"output_tokens":2}}\n\n'
+            ),
+        )
+
+    provider = AnthropicProvider(
+        "claude-3-5-sonnet",
+        api_key="test-anthropic-key",
+        base_url="https://api.anthropic.com/v1",
+        transport=httpx.MockTransport(handler),
+    )
+
+    chunks = asyncio.run(_collect(provider.stream_chat(_request())))
+
+    assert [chunk["delta"] for chunk in chunks if chunk["delta"]] == ["Anthropic ", "stream."]
+    assert chunks[-1]["finish_reason"] == "end_turn"
+    assert chunks[-1]["input_tokens"] == 15
+    assert chunks[-1]["output_tokens"] == 2
+
+
+async def _collect(stream) -> list[dict[str, object]]:
+    return [chunk async for chunk in stream]

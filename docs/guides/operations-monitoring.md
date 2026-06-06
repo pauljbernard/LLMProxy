@@ -2,6 +2,37 @@
 
 `llmProxy` now includes a dedicated operations monitoring surface in the admin console plus supporting APIs.
 
+## Worker lanes
+
+The default Compose deployment separates:
+
+- `worker`: short-running operational jobs
+- `training-worker`: long-running `training.run` jobs
+
+This reduces the chance that one training run blocks:
+
+- dataset imports
+- KPI generation
+- event follow-up work
+- retraining planning
+
+The lane behavior is controlled with:
+
+- `LLMPROXY_WORKER_INCLUDE_JOB_TYPES`
+- `LLMPROXY_WORKER_EXCLUDE_JOB_TYPES`
+
+Example:
+
+```text
+LLMPROXY_WORKER_EXCLUDE_JOB_TYPES=training.run
+```
+
+and a dedicated training worker can run with:
+
+```text
+python3 -m app.runtime training-worker
+```
+
 ## Visual monitoring
 
 Open:
@@ -22,6 +53,8 @@ That panel provides:
 - live feed snapshot
 
 The panel refreshes the live feed on demand and also polls while the panel is active.
+
+Streamed chat requests are persisted after the stream completes. During an active stream, you may see request activity in logs before the final request/response records appear in the database-backed views.
 
 ## What you can observe
 

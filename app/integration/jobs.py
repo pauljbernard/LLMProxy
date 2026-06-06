@@ -122,8 +122,17 @@ def enqueue_performance_sampling_job(
 
 
 def claim_next_job(session: Session) -> JobQueueRecord | None:
+    return claim_next_job_for_lane(session)
+
+
+def claim_next_job_for_lane(
+    session: Session,
+    *,
+    include_job_types: set[str] | None = None,
+    exclude_job_types: set[str] | None = None,
+) -> JobQueueRecord | None:
     now = datetime.now(timezone.utc)
-    job = session.execute(
+    statement = (
         select(JobQueueRecord)
         .where(
             JobQueueRecord.status == "pending",
@@ -131,7 +140,12 @@ def claim_next_job(session: Session) -> JobQueueRecord | None:
         )
         .order_by(JobQueueRecord.created_at.asc())
         .with_for_update(skip_locked=True)
-    ).scalars().first()
+    )
+    if include_job_types:
+        statement = statement.where(JobQueueRecord.job_type.in_(sorted(include_job_types)))
+    if exclude_job_types:
+        statement = statement.where(JobQueueRecord.job_type.not_in(sorted(exclude_job_types)))
+    job = session.execute(statement).scalars().first()
     if job is None:
         return None
     job.status = "running"

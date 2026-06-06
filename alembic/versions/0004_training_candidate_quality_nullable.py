@@ -1,7 +1,7 @@
 """Make training candidate quality nullable.
 
 Revision ID: 0004_training_candidate_quality_nullable
-Revises: 0003_model_performance_indexes
+Revises: 0003_model_perf_indexes
 Create Date: 2026-06-05
 """
 
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 
 
 revision = "0004_tc_quality_nullable"
-down_revision = "0003_model_performance_indexes"
+down_revision = "0003_model_perf_indexes"
 branch_labels = None
 depends_on = None
 

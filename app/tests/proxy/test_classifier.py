@@ -39,7 +39,7 @@ def test_classifier_marks_private_requests() -> None:
     request = ChatCompletionRequest.model_validate(
         {
             "model": "proxy-auto",
-            "messages": [{"role": "user", "content": "This is a private secret architecture note."}],
+            "messages": [{"role": "user", "content": "This contains a private key for the architecture service."}],
             "metadata": {"session_id": "sess_123", "domain_hint": "software_architecture"},
         }
     )
@@ -50,11 +50,39 @@ def test_classifier_marks_private_requests() -> None:
     assert classification["domain"] == "software_architecture"
 
 
+def test_classifier_does_not_mark_private_method_as_sensitive() -> None:
+    request = ChatCompletionRequest.model_validate(
+        {
+            "model": "proxy-auto",
+            "messages": [{"role": "user", "content": "Refactor this private method in a repository service."}],
+            "metadata": {"session_id": "sess_234", "domain_hint": "coding"},
+        }
+    )
+
+    classification = classify_request(request)
+
+    assert classification["privacy_level"] == "standard"
+
+
+def test_classifier_respects_explicit_privacy_hint() -> None:
+    request = ChatCompletionRequest.model_validate(
+        {
+            "model": "proxy-auto",
+            "messages": [{"role": "user", "content": "Rotate this API key immediately."}],
+            "metadata": {"session_id": "sess_345", "domain_hint": "coding", "privacy_hint": False},
+        }
+    )
+
+    classification = classify_request(request)
+
+    assert classification["privacy_level"] == "standard"
+
+
 def test_router_selects_local_for_private_requests() -> None:
     request = ChatCompletionRequest.model_validate(
         {
             "model": "proxy-auto",
-            "messages": [{"role": "user", "content": "This is a private secret architecture note."}],
+            "messages": [{"role": "user", "content": "This contains a private key for the architecture service."}],
             "metadata": {"session_id": "sess_123", "domain_hint": "software_architecture"},
         }
     )

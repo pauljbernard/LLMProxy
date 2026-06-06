@@ -1,6 +1,7 @@
 """Ollama provider implementation."""
 
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
+import json
 
 from app.config import Settings
 from app.providers.base import BaseProvider
@@ -10,6 +11,7 @@ from app.schemas.chat import ChatCompletionRequest
 class OllamaProvider(BaseProvider):
     provider_family = "local runtime"
     provider_name = "ollama"
+    supports_streaming = True
     supports_embeddings = True
 
     def __init__(
@@ -71,6 +73,33 @@ class OllamaProvider(BaseProvider):
             "cost_estimate": 0.0,
             "raw_response": raw_response,
         }
+
+    async def stream_chat(self, request: ChatCompletionRequest) -> AsyncIterator[dict[str, object]]:
+        payload = {
+            "model": self.model_id,
+            "messages": self._request_messages(request.messages),
+            "stream": True,
+            "options": {
+                "temperature": request.temperature,
+                "num_predict": request.max_tokens,
+            },
+        }
+        async with self._client(base_url=self.base_url) as client:
+            async with client.stream("POST", "/api/chat", json=payload) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line:
+                        continue
+                    raw_chunk = json.loads(line)
+                    message = raw_chunk.get("message") or {}
+                    yield {
+                        "model": str(raw_chunk.get("model", self.model_id)),
+                        "delta": str(message.get("content", "")),
+                        "finish_reason": raw_chunk.get("done_reason") if raw_chunk.get("done") else None,
+                        "input_tokens": int(raw_chunk.get("prompt_eval_count", 0)),
+                        "output_tokens": int(raw_chunk.get("eval_count", 0)),
+                        "raw_chunk": raw_chunk,
+                    }
 
     async def embed(
         self,
