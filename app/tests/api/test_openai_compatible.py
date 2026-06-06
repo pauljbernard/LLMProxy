@@ -320,6 +320,75 @@ def test_chat_completions_streams_ollama_sse_and_persists(monkeypatch) -> None:
     assert len(fake_session.items) == 5
 
 
+def test_chat_completions_streams_when_selected_provider_not_in_registry(monkeypatch) -> None:
+    from app.api import openai_compatible
+    from app.api.dependencies import get_async_session
+
+    class FakeDecision:
+        def __init__(self) -> None:
+            self.routing_decision_id = "route_missing_provider"
+            self.session_id = "sess_missing_provider"
+            self.policy_version = "test-policy"
+            self.selected_provider = "missing-provider"
+            self.selected_provider_family = "Missing"
+            self.selected_model = "fallback-model"
+            self.selected_mode = "fallback"
+            self.decision_rationale = "fallback"
+            self.predicted_cost_class = "medium"
+            self.predicted_latency_class = "medium"
+            self.ranked_alternatives = []
+            self.fallback_chain = []
+
+    class FakeRoute:
+        def __init__(self) -> None:
+            self.provider_key = "openai"
+            self.decision = FakeDecision()
+            self.shadow_provider_keys = []
+
+    class FakeStreamingProvider:
+        supports_streaming = True
+
+    async def fake_stream_with_fallback(provider_registry, selected_route, request):
+        yield (
+            {
+                "model": "fallback-model",
+                "delta": "Recovered stream.",
+                "finish_reason": "stop",
+                "input_tokens": 3,
+                "output_tokens": 2,
+            },
+            selected_route.decision,
+        )
+
+    async def fake_resolve_route_and_registry(*args, **kwargs):
+        return FakeRoute(), {"openai": FakeStreamingProvider()}
+
+    monkeypatch.setattr(openai_compatible, "_stream_with_fallback", fake_stream_with_fallback)
+    monkeypatch.setattr(openai_compatible, "_resolve_route_and_registry", fake_resolve_route_and_registry)
+
+    fake_session = FakeSession()
+    fake_async_session = FakeAsyncSession(fake_session)
+    app.dependency_overrides[get_async_session] = lambda: fake_async_session
+    client = TestClient(app)
+    with client.stream(
+        "POST",
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer change-me"},
+        json={
+            "model": "proxy-auto",
+            "stream": True,
+            "messages": [{"role": "user", "content": "Handle fallback safely."}],
+            "metadata": {"session_id": "sess_missing_provider", "domain_hint": "general"},
+        },
+    ) as response:
+        payload = response.read().decode("utf-8")
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert '"content": "Recovered stream."' in payload
+    assert "data: [DONE]" in payload
+
+
 def test_chat_completions_routes_research_to_google(monkeypatch) -> None:
     from app.api import openai_compatible
     from app.api.dependencies import get_async_session

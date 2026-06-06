@@ -1,6 +1,8 @@
 from unittest.mock import patch
 
-from app.runtime import parse_args, run_migrations, run_worker_iteration
+import pytest
+
+from app.runtime import parse_args, run_migrations, run_worker, run_worker_iteration
 
 
 def test_parse_args_accepts_api_role() -> None:
@@ -98,3 +100,25 @@ def test_run_worker_iteration_passes_job_lane_filters() -> None:
     _, kwargs = claim.call_args
     assert kwargs["include_job_types"] == {"training.run"}
     assert kwargs["exclude_job_types"] == {"kpi.generate"}
+
+
+def test_run_worker_recovers_after_job_failure() -> None:
+    settings = type(
+        "Settings",
+        (),
+        {
+            "llmproxy_database_wait_timeout_seconds": 1,
+            "worker_include_job_types": set(),
+            "worker_exclude_job_types": set(),
+        },
+    )()
+
+    with patch("app.runtime.get_settings", return_value=settings):
+        with patch("app.runtime.wait_for_database"):
+            with patch("app.runtime.time.sleep"):
+                with patch("app.runtime.log_record"):
+                    with patch("app.runtime.run_worker_iteration", side_effect=[RuntimeError("boom"), KeyboardInterrupt()]) as run_iteration:
+                        with pytest.raises(KeyboardInterrupt):
+                            run_worker()
+
+    assert run_iteration.call_count == 2
