@@ -59,10 +59,22 @@ def run_worker(
     settings = get_settings()
     wait_for_database(settings.llmproxy_database_wait_timeout_seconds)
     while True:  # pragma: no cover - long-lived runtime role
-        processed = run_worker_iteration(
-            include_job_types=include_job_types or settings.worker_include_job_types,
-            exclude_job_types=exclude_job_types or settings.worker_exclude_job_types,
-        )
+        try:
+            processed = run_worker_iteration(
+                include_job_types=include_job_types or settings.worker_include_job_types,
+                exclude_job_types=exclude_job_types or settings.worker_exclude_job_types,
+            )
+        except Exception as exc:
+            log_record(
+                settings,
+                level="ERROR",
+                component="runtime.worker",
+                category="error",
+                message="Worker loop recovered from job failure",
+                data={"error": str(exc)},
+            )
+            time.sleep(1)
+            continue
         if not processed:
             time.sleep(5)
 

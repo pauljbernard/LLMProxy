@@ -425,7 +425,8 @@ async def chat_completions(
                     if completion_tokens == 0:
                         completion_tokens = len(aggregated_content.split())
                     provider_name = resolved_decision.selected_provider
-                    price_per_token = getattr(provider_registry[provider_name], "price_per_token", 0.0)
+                    selected_provider = provider_registry.get(provider_name)
+                    price_per_token = getattr(selected_provider, "price_per_token", 0.0)
                     provider_result = {
                         "model": provider_model,
                         "content": aggregated_content,

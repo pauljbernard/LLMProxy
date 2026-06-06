@@ -75,7 +75,23 @@ async def run_teacher_ensemble(
             return result
         return await provider.invoke(request)
 
-    results = await asyncio.gather(*(_teacher_result(key) for key in teacher_keys))
+    gathered_results = await asyncio.gather(*(_teacher_result(key) for key in teacher_keys), return_exceptions=True)
+    results: list[dict[str, object]] = []
+    for provider_key, result in zip(teacher_keys, gathered_results, strict=False):
+        if isinstance(result, BaseException):
+            log_record(
+                settings,
+                level="ERROR",
+                component="proxy.ensemble",
+                category="error",
+                message="Teacher request failed",
+                data={"request_id": request_log_id, "provider": provider_key, "error": str(result)},
+            )
+            continue
+        results.append(result)
+
+    if not results:
+        raise RuntimeError("All teacher models failed.")
 
     teacher_candidates: list[TeacherCandidate] = []
 
@@ -125,7 +141,7 @@ async def run_teacher_ensemble(
             session_id=request.metadata.session_id,
             domain=request.metadata.domain_hint or "general",
             task_type=request.metadata.task_type_hint or "question_answer",
-            quality_score=max(critique.scores.values()),
+            quality_score=max(critique.scores.values(), default=None),
             selected_response=winning_candidate.content,
             messages=[message.model_dump(mode="json") for message in request.messages],
             provenance={
