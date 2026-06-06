@@ -30,9 +30,9 @@ def test_submit_training_run_returns_response(monkeypatch) -> None:
             training_run_id="train_1",
             dataset_version_id=request.dataset_version_id,
             training_mode=request.training_mode,
-            status="completed",
-            artifact_path="/tmp/adapter.bin",
-            metrics={"loss": 0.1},
+            status="pending",
+            artifact_path="/tmp/train_1",
+            metrics={},
         ),
     )
 
@@ -51,10 +51,10 @@ def test_submit_training_run_returns_response(monkeypatch) -> None:
     )
     app.dependency_overrides.clear()
 
-    assert response.status_code == 200
+    assert response.status_code == 202
     payload = response.json()
     assert payload["training_run_id"] == "train_1"
-    assert payload["status"] == "completed"
+    assert payload["status"] == "pending"
 
 
 def test_list_training_runs_returns_serialized_runs(monkeypatch) -> None:
@@ -94,4 +94,3 @@ def test_list_training_runs_returns_serialized_runs(monkeypatch) -> None:
     assert len(payload) == 1
     assert payload[0]["id"] == "train_1"
     assert payload[0]["training_mode"] == "qlora"
-

@@ -49,20 +49,20 @@ def build_dataset_version() -> DatasetVersion:
     )
 
 
-def test_run_evaluation_persists_result_and_package(tmp_path: Path) -> None:
+def test_run_evaluation_blocks_until_real_backend_exists(tmp_path) -> None:
     session = FakeSession(build_training_run(), build_dataset_version())
     settings = Settings(llmproxy_models_path=str(tmp_path))
 
-    result = run_evaluation(
-        session,
-        request=EvaluationRunRequest(training_run_id="train_1"),
-        settings=settings,
-    )
-
-    assert result.domain == "coding"
-    assert result.promotion_status == "approved"
-    assert Path(result.package_manifest_path).exists()
-    assert len(session.added) == 3
+    try:
+        run_evaluation(
+            session,
+            request=EvaluationRunRequest(training_run_id="train_1"),
+            settings=settings,
+        )
+    except NotImplementedError as exc:
+        assert "Real benchmark execution is not configured" in str(exc)
+    else:
+        raise AssertionError("Expected NotImplementedError for synthetic evaluation path")
 
 
 def test_run_evaluation_rejects_missing_training_run(tmp_path: Path) -> None:

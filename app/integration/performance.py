@@ -34,7 +34,7 @@ def sample_performance(
     request_log_id: str,
     route_type: str,
     cost_estimate: float,
-    quality_score: float,
+    quality_score: float | None,
     successful: bool,
 ) -> ModelPerformanceSample:
     sample = ModelPerformanceSample(
@@ -98,7 +98,8 @@ def generate_kpi_report(session: Session, *, settings: Settings) -> KpiReportRes
     successful_local_substitutions = [
         sample
         for sample in local_samples
-        if sample.quality_score >= frontier_baseline_score(sample.domain) - 0.05
+        if sample.quality_score is not None
+        and sample.quality_score >= frontier_baseline_score(sample.domain) - 0.05
     ]
     avoided_frontier_spend = sum(
         frontier_baseline_cost(sample.domain) - sample.cost_estimate

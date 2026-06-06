@@ -18,6 +18,7 @@ from app.integration.performance import generate_kpi_report
 from app.datasets.ingestion import import_dataset
 from app.schemas.dataset import DatasetImportRequest
 from app.services.observability import log_record
+from app.training.orchestrator import execute_training_run
 
 
 def wait_for_database(timeout_seconds: int) -> None:
@@ -89,6 +90,7 @@ def run_scheduler_iteration() -> None:
 def run_worker_iteration() -> bool:
     settings = get_settings()
     session = get_session_factory()()
+    job: JobQueueRecord | None = None
     try:
         job = claim_next_job(session)
         if job is None:
@@ -119,6 +121,12 @@ def run_worker_iteration() -> bool:
                 trigger_event_type=str(job.payload_json.get("trigger_event_type", "unknown")),
                 payload=dict(job.payload_json),
             )
+        elif job.job_type == "training.run":
+            execute_training_run(
+                session,
+                training_run_id=str(job.payload_json["training_run_id"]),
+                settings=settings,
+            )
         else:
             raise RuntimeError(f"Unsupported job type: {job.job_type}")
 
@@ -137,7 +145,7 @@ def run_worker_iteration() -> bool:
         session.rollback()
         retry_session = get_session_factory()()
         try:
-            retry_job = retry_session.get(JobQueueRecord, job.id) if 'job' in locals() and job is not None else None
+            retry_job = retry_session.get(JobQueueRecord, job.id) if job is not None else None
             if retry_job is not None:
                 mark_job_failed(retry_job, error=str(exc))
                 retry_session.commit()
@@ -149,7 +157,7 @@ def run_worker_iteration() -> bool:
             component="runtime.worker",
             category="error",
             message="Worker iteration failed",
-            data={"job_id": job.id if 'job' in locals() and job is not None else None, "error": str(exc)},
+            data={"job_id": job.id if job is not None else None, "error": str(exc)},
         )
         raise
     finally:

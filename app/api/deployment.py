@@ -17,7 +17,7 @@ router = APIRouter(prefix="/deployment", tags=["deployment"])
     response_model=DeploymentResponse,
     dependencies=[Depends(require_operator_token)],
 )
-async def activate_model(
+def activate_model(
     model_alias: str,
     request: DeploymentRequest,
     session: Session = Depends(get_session),
@@ -45,7 +45,7 @@ async def activate_model(
     response_model=DeploymentResponse,
     dependencies=[Depends(require_operator_token)],
 )
-async def rollback(
+def rollback(
     model_alias: str,
     session: Session = Depends(get_session),
     settings: Settings = Depends(get_runtime_settings),
@@ -72,7 +72,7 @@ async def rollback(
     response_model=list[RoutingPolicyVersionView],
     dependencies=[Depends(require_api_token)],
 )
-async def list_routing_policy_versions(
+def list_routing_policy_versions(
     session: Session = Depends(get_session),
 ) -> list[RoutingPolicyVersionView]:
     return [

@@ -4,9 +4,10 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends
 from fastapi import HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import get_runtime_settings, get_session, require_api_token, require_operator_token
+from app.api.dependencies import get_async_session, get_runtime_settings, get_session, require_api_token, require_operator_token
 from app.config import Settings
 from app.proxy.candidates import (
     approve_training_candidate,
@@ -36,30 +37,34 @@ router = APIRouter(prefix="/proxy", tags=["proxy-native"])
 @router.post("/ensemble", response_model=EnsembleResponse, dependencies=[Depends(require_api_token)])
 async def ensemble(
     request: ChatCompletionRequest,
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_async_session),
     settings: Settings = Depends(get_runtime_settings),
 ) -> EnsembleResponse:
     request = request.model_copy(update={"model": "proxy-ensemble"})
     classification = classify_request(request)
-    request_log = record_request(session, request, classification)
-    session.flush()
-    selected_route = select_route(request_log.id, request, classification, settings)
-    selected_route.decision.selected_mode = "frontier_ensemble"
-    record_routing_decision(session, request_log.id, selected_route.decision)
-    session.flush()
+    def _prepare(sync_session):
+        request_log = record_request(sync_session, request, classification)
+        sync_session.flush()
+        selected_route = select_route(request_log.id, request, classification, settings, session=sync_session)
+        selected_route.decision.selected_mode = "frontier_ensemble"
+        record_routing_decision(sync_session, request_log.id, selected_route.decision)
+        sync_session.flush()
+        return request_log.id, selected_route
+
+    request_log_id, selected_route = await session.run_sync(_prepare)
     response = await run_teacher_ensemble(
         request=request,
-        request_log_id=request_log.id,
+        request_log_id=request_log_id,
         routing_decision_id=selected_route.decision.routing_decision_id,
         session=session,
         settings=settings,
     )
-    session.commit()
+    await session.commit()
     return response
 
 
 @router.get("/training-candidates", response_model=list[TrainingCandidateView], dependencies=[Depends(require_api_token)])
-async def list_training_candidates_endpoint(
+def list_training_candidates_endpoint(
     session: Session = Depends(get_session),
 ) -> list[TrainingCandidateView]:
     candidates = list_training_candidates(session)
@@ -87,7 +92,7 @@ async def list_training_candidates_endpoint(
     response_model=CandidateStatusUpdateResponse,
     dependencies=[Depends(require_api_token)],
 )
-async def approve_candidate(
+def approve_candidate(
     candidate_id: str,
     session: Session = Depends(get_session),
 ) -> CandidateStatusUpdateResponse:
@@ -109,7 +114,7 @@ async def approve_candidate(
     response_model=CandidateStatusUpdateResponse,
     dependencies=[Depends(require_api_token)],
 )
-async def reject_candidate(
+def reject_candidate(
     candidate_id: str,
     session: Session = Depends(get_session),
 ) -> CandidateStatusUpdateResponse:
@@ -127,7 +132,7 @@ async def reject_candidate(
 
 
 @router.post("/export/jsonl", response_model=DatasetExportResponse, dependencies=[Depends(require_api_token)])
-async def export_training_candidates(
+def export_training_candidates(
     request: DatasetExportRequest,
     session: Session = Depends(get_session),
     settings: Settings = Depends(get_runtime_settings),
@@ -141,7 +146,7 @@ async def export_training_candidates(
 
 
 @router.post("/models/register", response_model=ModelRegistrationResponse, dependencies=[Depends(require_operator_token)])
-async def register_model(
+def register_model(
     request: ModelRegistrationRequest,
     settings: Settings = Depends(get_runtime_settings),
 ) -> ModelRegistrationResponse:

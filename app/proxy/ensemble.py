@@ -30,72 +30,79 @@ async def run_teacher_ensemble(
     )
 
     teacher_candidates: list[TeacherCandidate] = []
-    response_records = []
-    for rank, result in enumerate(results, start=1):
-        response_record = record_model_response(
-            session,
-            request_log_id,
-            result,
-            response_role="teacher_candidate",
-        )
-        response_records.append(response_record)
-        teacher_candidates.append(
-            TeacherCandidate(
-                response_id=response_record.id,
-                provider=str(result["provider"]),
-                provider_family=str(result["provider_family"]),
-                model=str(result["model"]),
-                content=str(result["content"]),
-                score=round(1.0 - (rank * 0.03), 4),
-                rationale=f"Teacher candidate from {result['provider']} ranked at ensemble position {rank}.",
+
+    def _persist_candidates(sync_session):
+        candidates: list[TeacherCandidate] = []
+        for rank, result in enumerate(results, start=1):
+            response_record = record_model_response(
+                sync_session,
+                request_log_id,
+                result,
+                response_role="teacher_candidate",
             )
-        )
+            candidates.append(
+                TeacherCandidate(
+                    response_id=response_record.id,
+                    provider=str(result["provider"]),
+                    provider_family=str(result["provider_family"]),
+                    model=str(result["model"]),
+                    content=str(result["content"]),
+                    score=round(1.0 - (rank * 0.03), 4),
+                    rationale=f"Teacher candidate from {result['provider']} ranked at ensemble position {rank}.",
+                )
+            )
+        return candidates
+
+    teacher_candidates = await session.run_sync(_persist_candidates)
 
     critique = judge_response(teacher_candidates, domain=request.metadata.domain_hint or "general")
     winning_candidate = next(item for item in teacher_candidates if item.response_id == critique.selected_response_id)
-    record_judge_critique(
-        session,
-        request_log_id=request_log_id,
-        routing_decision_id=routing_decision_id,
-        judge_provider=critique.judge_provider,
-        judge_model=critique.judge_model,
-        selected_provider=critique.selected_provider,
-        selected_model=critique.selected_model,
-        selected_response_id=critique.selected_response_id,
-        critique_json=critique.model_dump(mode="json"),
-        synthesized_response=winning_candidate.content,
-    )
-    capture_training_candidate(
-        session,
-        request_log_id=request_log_id,
-        routing_decision_id=routing_decision_id,
-        session_id=request.metadata.session_id,
-        domain=request.metadata.domain_hint or "general",
-        task_type=request.metadata.task_type_hint or "question_answer",
-        quality_score=max(critique.scores.values()),
-        selected_response=winning_candidate.content,
-        messages=[message.model_dump(mode="json") for message in request.messages],
-        provenance={
-            "request_id": request_log_id,
-            "source": "teacher_ensemble",
-            "teacher_models": [candidate.model for candidate in teacher_candidates],
-            "judge_model": critique.judge_model,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        },
-        validation={
-            "validated": True,
-            "validation_type": "judge_and_rules",
-            "tests_passed": None,
-            "static_checks_passed": None,
-            "secrets_detected": False,
-        },
-        metadata={
-            "selected_provider": critique.selected_provider,
-            "selected_model": critique.selected_model,
-            "selected_response_id": critique.selected_response_id,
-            "candidate_count": len(teacher_candidates),
-        },
-    )
+    def _persist_judge(sync_session):
+        record_judge_critique(
+            sync_session,
+            request_log_id=request_log_id,
+            routing_decision_id=routing_decision_id,
+            judge_provider=critique.judge_provider,
+            judge_model=critique.judge_model,
+            selected_provider=critique.selected_provider,
+            selected_model=critique.selected_model,
+            selected_response_id=critique.selected_response_id,
+            critique_json=critique.model_dump(mode="json"),
+            synthesized_response=winning_candidate.content,
+        )
+        capture_training_candidate(
+            sync_session,
+            request_log_id=request_log_id,
+            routing_decision_id=routing_decision_id,
+            session_id=request.metadata.session_id,
+            domain=request.metadata.domain_hint or "general",
+            task_type=request.metadata.task_type_hint or "question_answer",
+            quality_score=max(critique.scores.values()),
+            selected_response=winning_candidate.content,
+            messages=[message.model_dump(mode="json") for message in request.messages],
+            provenance={
+                "request_id": request_log_id,
+                "source": "teacher_ensemble",
+                "teacher_models": [candidate.model for candidate in teacher_candidates],
+                "judge_model": critique.judge_model,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            },
+            validation={
+                "validated": True,
+                "validation_type": "judge_and_rules",
+                "tests_passed": None,
+                "static_checks_passed": None,
+                "secrets_detected": False,
+            },
+            metadata={
+                "selected_provider": critique.selected_provider,
+                "selected_model": critique.selected_model,
+                "selected_response_id": critique.selected_response_id,
+                "candidate_count": len(teacher_candidates),
+            },
+        )
+
+    await session.run_sync(_persist_judge)
 
     chat_response = ChatCompletionResponse.from_request(
         request,

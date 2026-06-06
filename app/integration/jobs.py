@@ -32,7 +32,8 @@ def enqueue_job(
             ).scalars()
         )
         for job in existing_jobs:
-            if str(job.payload_json.get(field_name)) == field_value:
+            candidate_value = job.job_type if field_name == "job_type" else job.payload_json.get(field_name)
+            if str(candidate_value) == field_value:
                 return job
 
     job = JobQueueRecord(
@@ -77,7 +78,21 @@ def enqueue_dataset_import_job(
 
 
 def enqueue_kpi_report_job(session: Session) -> JobQueueRecord:
-    return enqueue_job(session, job_type="kpi.generate", payload={})
+    return enqueue_job(
+        session,
+        job_type="kpi.generate",
+        payload={},
+        dedupe_key=("job_type", "kpi.generate"),
+    )
+
+
+def enqueue_training_run_job(session: Session, *, training_run_id: str) -> JobQueueRecord:
+    return enqueue_job(
+        session,
+        job_type="training.run",
+        payload={"training_run_id": training_run_id},
+        dedupe_key=("training_run_id", training_run_id),
+    )
 
 
 def enqueue_retraining_plan_job(

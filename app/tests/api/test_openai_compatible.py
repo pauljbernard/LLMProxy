@@ -27,6 +27,23 @@ class FakeSession:
         return None
 
 
+class FakeAsyncSession:
+    def __init__(self, sync_session: FakeSession) -> None:
+        self.sync_session = sync_session
+
+    async def run_sync(self, fn):
+        return fn(self.sync_session)
+
+    async def commit(self) -> None:
+        self.sync_session.commit()
+
+    async def rollback(self) -> None:
+        return None
+
+    async def close(self) -> None:
+        self.sync_session.close()
+
+
 def test_list_models_requires_auth() -> None:
     client = TestClient(app)
     response = client.get("/v1/models")
@@ -54,13 +71,42 @@ def test_embeddings_requires_auth() -> None:
     assert response.status_code == 401
 
 
-def test_embeddings_returns_deterministic_vectors() -> None:
+def test_embeddings_returns_provider_vectors(monkeypatch) -> None:
+    from app.api import openai_compatible
+    from app.api.dependencies import get_runtime_settings
+    from app.config import Settings
+
+    openai = OpenAIProvider(
+        "gpt-5.5",
+        api_key="test-openai-key",
+        base_url="https://api.openai.com/v1",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {"embedding": [0.1, 0.2, 0.3], "index": 0},
+                        {"embedding": [0.4, 0.5, 0.6], "index": 1},
+                    ],
+                    "model": "text-embedding-3-small",
+                    "usage": {"prompt_tokens": 4, "total_tokens": 4},
+                },
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        openai_compatible,
+        "get_provider_registry",
+        lambda settings, session=None: {"openai": openai},
+    )
+    app.dependency_overrides[get_runtime_settings] = lambda: Settings(llmproxy_openai_api_key="test-openai-key")
     client = TestClient(app)
     response = client.post(
         "/v1/embeddings",
         headers={"Authorization": "Bearer change-me"},
         json={"model": "text-embedding-3-small", "input": ["hello world", "goodbye world"]},
     )
+    app.dependency_overrides.clear()
 
     assert response.status_code == 200
     payload = response.json()
@@ -68,7 +114,8 @@ def test_embeddings_returns_deterministic_vectors() -> None:
     assert payload["model"] == "text-embedding-3-small"
     assert len(payload["data"]) == 2
     assert payload["data"][0]["object"] == "embedding"
-    assert len(payload["data"][0]["embedding"]) == 16
+    assert payload["data"][0]["embedding"] == [0.1, 0.2, 0.3]
+    assert payload["data"][1]["embedding"] == [0.4, 0.5, 0.6]
     assert payload["data"][0]["embedding"] != payload["data"][1]["embedding"]
     assert payload["usage"]["prompt_tokens"] == 4
 
@@ -77,7 +124,7 @@ def test_chat_completions_routes_and_persists(monkeypatch) -> None:
     import httpx
 
     from app.api import openai_compatible
-    from app.api.dependencies import get_session
+    from app.api.dependencies import get_async_session
 
     ollama = OllamaProvider(
         "qwen2.5-coder:14b",
@@ -106,7 +153,8 @@ def test_chat_completions_routes_and_persists(monkeypatch) -> None:
         },
     )
     fake_session = FakeSession()
-    app.dependency_overrides[get_session] = lambda: fake_session
+    fake_async_session = FakeAsyncSession(fake_session)
+    app.dependency_overrides[get_async_session] = lambda: fake_async_session
     client = TestClient(app)
     response = client.post(
         "/v1/chat/completions",
@@ -135,7 +183,7 @@ def test_chat_completions_routes_and_persists(monkeypatch) -> None:
 
 def test_chat_completions_routes_architecture_to_anthropic(monkeypatch) -> None:
     from app.api import openai_compatible
-    from app.api.dependencies import get_session
+    from app.api.dependencies import get_async_session
 
     anthropic = AnthropicProvider(
         "claude-3-5-sonnet",
@@ -166,7 +214,8 @@ def test_chat_completions_routes_architecture_to_anthropic(monkeypatch) -> None:
     )
 
     fake_session = FakeSession()
-    app.dependency_overrides[get_session] = lambda: fake_session
+    fake_async_session = FakeAsyncSession(fake_session)
+    app.dependency_overrides[get_async_session] = lambda: fake_async_session
     client = TestClient(app)
     response = client.post(
         "/v1/chat/completions",
@@ -191,7 +240,7 @@ def test_chat_completions_routes_architecture_to_anthropic(monkeypatch) -> None:
 
 def test_chat_completions_routes_research_to_google(monkeypatch) -> None:
     from app.api import openai_compatible
-    from app.api.dependencies import get_session
+    from app.api.dependencies import get_async_session
 
     google = GoogleProvider(
         "gemini-2.5-pro",
@@ -229,7 +278,8 @@ def test_chat_completions_routes_research_to_google(monkeypatch) -> None:
     )
 
     fake_session = FakeSession()
-    app.dependency_overrides[get_session] = lambda: fake_session
+    fake_async_session = FakeAsyncSession(fake_session)
+    app.dependency_overrides[get_async_session] = lambda: fake_async_session
     client = TestClient(app)
     response = client.post(
         "/v1/chat/completions",

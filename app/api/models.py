@@ -15,14 +15,14 @@ router = APIRouter(prefix="/models", tags=["models"])
 
 
 @router.get("", response_model=list[ProviderCapability], dependencies=[Depends(require_api_token)])
-async def list_registered_models(
+def list_registered_models(
     settings: Settings = Depends(get_runtime_settings),
 ) -> list[ProviderCapability]:
     return list_provider_capabilities(settings)
 
 
 @router.get("/local", response_model=list[ModelPackageView], dependencies=[Depends(require_api_token)])
-async def list_local_model_packages(
+def list_local_model_packages(
     settings: Settings = Depends(get_runtime_settings),
 ) -> list[ModelPackageView]:
     manifests = list_model_packages(Path(settings.llmproxy_models_path))

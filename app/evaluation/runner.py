@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy import select
@@ -71,6 +72,10 @@ def run_evaluation(
     if dataset_version is None:
         raise ValueError(f"Dataset version '{training_run.dataset_version_id}' was not found.")
 
+    raise NotImplementedError(
+        "Real benchmark execution is not configured. Blocked to prevent fabricated evaluation scores and promotions."
+    )
+
     benchmark_bundle = load_benchmarks(dataset_version.domain)
     benchmark_manifest = benchmark_bundle["manifest"]
     benchmark_records = benchmark_bundle["records"]
@@ -134,7 +139,7 @@ def run_evaluation(
             "evaluation_run_id": evaluation_run_id,
             "frontier_baseline_name": baseline_name,
         },
-        "created_at": "2026-06-05T00:00:00Z",
+        "created_at": datetime.now(timezone.utc).isoformat(),
     }
     package_manifest_path = store_artifact(
         directory=package_dir,

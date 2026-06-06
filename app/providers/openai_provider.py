@@ -11,6 +11,7 @@ class OpenAIProvider(BaseProvider):
     provider_family = "OpenAI"
     provider_name = "openai"
     price_per_token = 0.00002
+    supports_embeddings = True
 
     def __init__(
         self,
@@ -100,3 +101,30 @@ class OpenAIProvider(BaseProvider):
             "cost_estimate": cost_estimate,
             "raw_response": raw_response,
         }
+
+    async def embed(
+        self,
+        texts: Sequence[str],
+        *,
+        model: str | None = None,
+        dimensions: int | None = None,
+    ) -> list[list[float]]:
+        api_key = self._require_config(self.api_key, field_name="llmproxy_openai_api_key")
+        payload: dict[str, object] = {
+            "model": model or self.model_id,
+            "input": list(texts),
+        }
+        if dimensions is not None:
+            payload["dimensions"] = dimensions
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        async with self._client(base_url=self.base_url, headers=headers) as client:
+            response = await client.post("/embeddings", json=payload)
+            response.raise_for_status()
+            raw_response = response.json()
+        return [
+            [float(value) for value in item.get("embedding", [])]
+            for item in raw_response.get("data", [])
+        ]

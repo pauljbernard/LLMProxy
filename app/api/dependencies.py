@@ -5,10 +5,11 @@ from dataclasses import dataclass
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
-from app.db.session import get_db_session
+from app.db.session import get_async_db_session, get_db_session
 
 security = HTTPBearer(auto_error=False)
 
@@ -55,3 +56,9 @@ def require_operator_token(
 
 def get_session() -> Generator[Session, None, None]:
     yield from get_db_session()
+
+
+async def get_async_session() -> AsyncSession:
+    async for session in get_async_db_session():
+        return session
+    raise RuntimeError("Async session generator did not yield a session.")

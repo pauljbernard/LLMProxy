@@ -10,6 +10,7 @@ from app.schemas.chat import ChatCompletionRequest
 class OllamaProvider(BaseProvider):
     provider_family = "local runtime"
     provider_name = "ollama"
+    supports_embeddings = True
 
     def __init__(
         self,
@@ -70,3 +71,28 @@ class OllamaProvider(BaseProvider):
             "cost_estimate": 0.0,
             "raw_response": raw_response,
         }
+
+    async def embed(
+        self,
+        texts: Sequence[str],
+        *,
+        model: str | None = None,
+        dimensions: int | None = None,
+    ) -> list[list[float]]:
+        del dimensions
+        resolved_model = model or self.model_id
+        embeddings: list[list[float]] = []
+        async with self._client(base_url=self.base_url) as client:
+            for text in texts:
+                response = await client.post(
+                    "/api/embed",
+                    json={"model": resolved_model, "input": text},
+                )
+                response.raise_for_status()
+                raw_response = response.json()
+                values = raw_response.get("embeddings") or raw_response.get("embedding") or []
+                if values and isinstance(values[0], list):
+                    embeddings.append([float(value) for value in values[0]])
+                else:
+                    embeddings.append([float(value) for value in values])
+        return embeddings
