@@ -389,17 +389,14 @@ const panelLoaders = {
   models: async () => {
     await Promise.all([refreshModels(), refreshLocalModels(), refreshPolicies()]);
   },
-  datasets: async () => {
+  data: async () => {
     await refreshDatasetPipeline();
   },
-  evaluation: async () => {
-    await Promise.all([refreshEvaluations(), refreshKpis()]);
+  training: async () => {
+    await Promise.all([refreshTrainingRuns(), refreshEvaluations(), refreshKpis()]);
   },
   operations: async () => {
-    await Promise.all([refreshOperationsSummary(), refreshOperationsLive()]);
-  },
-  ops: async () => {
-    await Promise.all([refreshJobs(), refreshEvents()]);
+    await Promise.all([refreshOperationsSummary(), refreshOperationsLive(), refreshJobs(), refreshEvents()]);
   },
 };
 
@@ -503,15 +500,95 @@ async function refreshStreamingSupport() {
 }
 
 async function refreshModels() {
-  renderOutput("#models-output", await apiFetch("/v1/models"));
+  const payload = await apiFetch("/v1/models");
+  const host = $("#models-table");
+  host.innerHTML = "";
+  host.appendChild(
+    makeTable(["Model", "Type", "Actions"], payload, (row) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td><strong>${escapeHtml(row.id)}</strong></td>
+        <td>${escapeHtml(row.object || "model")}</td>
+        <td></td>
+      `;
+      const actions = document.createElement("div");
+      actions.className = "table-actions";
+      actions.appendChild(createActionButton("Inspect", () => showDetailCard("#model-detail-card", "#model-detail-output", row), { accent: true }));
+      tr.lastElementChild.appendChild(actions);
+      return tr;
+    }, "Proxy-exposed models will appear here."),
+  );
+  return payload;
 }
 
 async function refreshLocalModels() {
-  renderOutput("#local-models-output", await apiFetch("/models/local"));
+  const payload = await apiFetch("/models/local");
+  const host = $("#local-models-table");
+  host.innerHTML = "";
+  host.appendChild(
+    makeTable(["Alias", "Base Model", "Domains", "Status", "Actions"], payload, (row) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td><strong>${escapeHtml(row.model_alias)}</strong></td>
+        <td>${escapeHtml(row.base_model)}</td>
+        <td>${escapeHtml((row.domains || []).join(", ") || "-")}</td>
+        <td>${statusBadge(row.promotion_status || "-")}</td>
+        <td></td>
+      `;
+      const actions = document.createElement("div");
+      actions.className = "table-actions";
+      actions.appendChild(createActionButton("Inspect", () => showDetailCard("#model-detail-card", "#model-detail-output", row), { accent: true }));
+      tr.lastElementChild.appendChild(actions);
+      return tr;
+    }, "Registered local packages will appear here."),
+  );
+  return payload;
 }
 
 async function refreshPolicies() {
-  renderOutput("#policies-output", await apiFetch("/deployment/routing-policies"));
+  const payload = await apiFetch("/deployment/routing-policies");
+  const rows = payload.flatMap((policyVersion) => {
+    const entries = Array.isArray(policyVersion.policy?.entries) ? policyVersion.policy.entries : [];
+    if (!entries.length) {
+      return [{
+        policy_version: policyVersion.policy_version,
+        domain: "-",
+        mode: "-",
+        provider: "-",
+        canary_percent: 0,
+        detail: policyVersion,
+      }];
+    }
+    return entries.map((entry) => ({
+      policy_version: policyVersion.policy_version,
+      domain: entry.domain || "-",
+      mode: entry.mode || "-",
+      provider: entry.provider || "-",
+      canary_percent: entry.canary_percent ?? 0,
+      detail: { policy_version: policyVersion.policy_version, entry },
+    }));
+  });
+  const host = $("#policies-table");
+  host.innerHTML = "";
+  host.appendChild(
+    makeTable(["Version", "Domain", "Mode", "Provider", "Canary", "Actions"], rows, (row) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td><strong>${escapeHtml(row.policy_version)}</strong></td>
+        <td>${escapeHtml(row.domain)}</td>
+        <td>${escapeHtml(row.mode)}</td>
+        <td>${escapeHtml(row.provider)}</td>
+        <td>${escapeHtml(String(row.canary_percent))}%</td>
+        <td></td>
+      `;
+      const actions = document.createElement("div");
+      actions.className = "table-actions";
+      actions.appendChild(createActionButton("Inspect", () => showDetailCard("#model-detail-card", "#model-detail-output", row.detail), { accent: true }));
+      tr.lastElementChild.appendChild(actions);
+      return tr;
+    }, "Routing policies will appear here as versions are published."),
+  );
+  return payload;
 }
 
 async function refreshCandidates() {
@@ -693,13 +770,12 @@ async function refreshTrainingRuns() {
       actions.className = "table-actions";
       actions.appendChild(
         createActionButton("Inspect", async () => {
-          renderOutput("#training-output", await apiFetch(`/admin/api/training/runs/${row.id}`));
+          showDetailCard("#training-detail-card", "#training-detail-output", await apiFetch(`/admin/api/training/runs/${row.id}`));
         }, { accent: true }),
       );
       actions.appendChild(
         createActionButton("Evaluate", () => {
           setFieldValue("#evaluation-form", "training_run_id", row.id);
-          setFieldValue("#training-show-form", "training_run_id", row.id);
           logConsole("evaluation form filled from training run", row);
         }),
       );
@@ -707,7 +783,6 @@ async function refreshTrainingRuns() {
       return tr;
     }, "Submit a training run to begin adapter creation for a dataset version."),
   );
-  renderOutput("#training-output", payload);
   return payload;
 }
 
@@ -732,7 +807,7 @@ async function refreshEvaluations() {
       actions.appendChild(
         createActionButton("Inspect", async () => {
           const detail = await apiFetch(`/admin/api/evaluation/runs/${row.id}`);
-          renderOutput("#evaluation-output", detail);
+          showDetailCard("#evaluation-detail-card", "#evaluation-detail-output", detail);
         }, { accent: true }),
       );
       actions.appendChild(
@@ -741,8 +816,7 @@ async function refreshEvaluations() {
           const manifestPath = detail.result_json?.package_manifest_path || row.package_manifest_path || "";
           const alias = detail.result_json?.model_alias || deriveAliasFromManifest(manifestPath);
           setFieldValue("#deploy-form", "model_alias", alias);
-          setFieldValue("#evaluation-show-form", "evaluation_run_id", row.id);
-          renderOutput("#evaluation-output", detail);
+          showDetailCard("#evaluation-detail-card", "#evaluation-detail-output", detail);
           logConsole("deployment form prepared from evaluation", { evaluation_run_id: row.id, model_alias: alias, manifest_path: manifestPath });
         }),
       );
@@ -750,7 +824,7 @@ async function refreshEvaluations() {
       return tr;
     }, "Evaluation runs will appear here once training outputs are scored."),
   );
-  renderOutput("#evaluation-output", payload);
+  return payload;
 }
 
 async function refreshKpis() {
@@ -994,6 +1068,9 @@ async function initialize() {
     $("#console-output").textContent = "";
   });
   $("#close-request-detail")?.addEventListener("click", () => $("#request-detail-card")?.classList.add("hidden"));
+  $("#close-model-detail")?.addEventListener("click", () => $("#model-detail-card")?.classList.add("hidden"));
+  $("#close-training-detail")?.addEventListener("click", () => $("#training-detail-card")?.classList.add("hidden"));
+  $("#close-evaluation-detail")?.addEventListener("click", () => $("#evaluation-detail-card")?.classList.add("hidden"));
   $("#close-job-detail")?.addEventListener("click", () => $("#job-detail-card")?.classList.add("hidden"));
   $("#close-event-detail")?.addEventListener("click", () => $("#event-detail-card")?.classList.add("hidden"));
 
@@ -1259,9 +1336,9 @@ async function initialize() {
     };
     try {
       const result = await withLoading(event.submitter, () => apiFetch("/training/runs", { method: "POST", body: JSON.stringify(body) }));
-      renderOutput("#training-output", result);
+      showDetailCard("#training-detail-card", "#training-detail-output", result);
       showToast("Training run submitted.", "ok");
-      await refreshDatasetPipeline();
+      await Promise.all([refreshDatasetPipeline(), refreshTrainingRuns()]);
     } catch (error) {
       showToast(`Training submission failed: ${String(error)}`, "err");
       logConsole("training submission failed", String(error));
@@ -1272,13 +1349,6 @@ async function initialize() {
     event.preventDefault();
     await refreshTrainingRuns();
   });
-  $("#training-show-form").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    const result = await apiFetch(`/admin/api/training/runs/${data.get("training_run_id")}`);
-    renderOutput("#training-output", result);
-  });
-
   $("#refresh-evaluations").addEventListener("click", async (event) => { try { await withLoading(event.currentTarget, () => refreshEvaluations()); } catch (error) { showToast(`Evaluation refresh failed: ${String(error)}`, "err"); logConsole("evaluation refresh failed", String(error)); } });
   $("#refresh-kpis").addEventListener("click", async (event) => { try { await withLoading(event.currentTarget, () => refreshKpis()); } catch (error) { showToast(`KPI refresh failed: ${String(error)}`, "err"); logConsole("kpi refresh failed", String(error)); } });
   $("#evaluation-filter-form").addEventListener("submit", async (event) => {
@@ -1295,19 +1365,13 @@ async function initialize() {
     };
     try {
       const result = await withLoading(event.submitter, () => apiFetch("/evaluation/runs", { method: "POST", body: JSON.stringify(body) }));
-      renderOutput("#evaluation-output", result);
+      showDetailCard("#evaluation-detail-card", "#evaluation-detail-output", result);
       showToast("Evaluation submitted.", "ok");
       await refreshEvaluations();
     } catch (error) {
       showToast(`Evaluation failed: ${String(error)}`, "err");
       logConsole("evaluation failed", String(error));
     }
-  });
-  $("#evaluation-show-form").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    const result = await apiFetch(`/admin/api/evaluation/runs/${data.get("evaluation_run_id")}`);
-    renderOutput("#evaluation-output", result);
   });
 
   $("#refresh-jobs").addEventListener("click", async (event) => { try { await withLoading(event.currentTarget, () => refreshJobs()); } catch (error) { showToast(`Jobs refresh failed: ${String(error)}`, "err"); logConsole("jobs refresh failed", String(error)); } });
