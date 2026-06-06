@@ -12,12 +12,13 @@ def test_admin_console_page_serves() -> None:
     response = client.get("/admin")
     assert response.status_code == 200
     assert "llmProxy Operator Console" in response.text
-    assert "exports-filter-form" in response.text
-    assert "streaming-support-table" in response.text
-    assert "streaming-validate-form" in response.text
-    assert "jobs-filter-form" in response.text
-    assert "training-table" in response.text
-    assert "evaluation-table" in response.text
+    assert "health-status-grid" in response.text
+    assert "config-table" in response.text
+    assert "pipeline-summary" in response.text
+    assert "kpi-metrics-grid" in response.text
+    assert "request-detail-card" in response.text
+    assert "job-detail-card" in response.text
+    assert "event-detail-card" in response.text
 
 
 def test_admin_static_asset_serves() -> None:
@@ -25,9 +26,9 @@ def test_admin_static_asset_serves() -> None:
     response = client.get("/admin/static/app.js")
     assert response.status_code == 200
     assert "initialize" in response.text
-    assert "refreshTrainingRuns" in response.text
-    assert "refreshEvaluations" in response.text
-    assert "refreshStreamingSupport" in response.text
+    assert "refreshDatasetPipeline" in response.text
+    assert "renderMetricGrid" in response.text
+    assert "showDetailCard" in response.text
     assert "apiStream" in response.text
 
 

@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="/admin/static/styles.css" />
   </head>
   <body>
+    <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
     <div class="shell">
       <aside class="sidebar">
         <div class="brand">
@@ -56,15 +57,17 @@
           <div class="grid two">
             <div class="card">
               <h3>Health</h3>
-              <pre id="health-output" class="output"></pre>
+              <div id="health-status-grid" class="metric-grid compact-top"></div>
+              <div id="health-meta-table" class="table-wrap compact-top"></div>
             </div>
             <div class="card">
               <h3>Config</h3>
-              <pre id="config-output" class="output"></pre>
+              <div id="config-provider-grid" class="metric-grid compact-top"></div>
+              <div id="config-table" class="table-wrap compact-top"></div>
             </div>
           </div>
           <div class="card">
-            <h3>Set Config Value</h3>
+            <h3>Configuration Editor</h3>
             <form id="config-set-form" class="form-inline">
               <input name="key" placeholder="LLMPROXY_OPENAI_MODEL" required />
               <input name="value" placeholder="gpt-5.5" required />
@@ -141,10 +144,13 @@
                 <button class="button accent" type="submit">Validate Frontier Stream</button>
               </form>
             </div>
-            <div class="card">
+          </div>
+          <div id="request-detail-card" class="card hidden">
+            <div class="card-header">
               <h3>Request Detail</h3>
-              <pre id="request-detail-output" class="output tall"></pre>
+              <button class="button ghost" id="close-request-detail" type="button">Close</button>
             </div>
+            <pre id="request-detail-output" class="output tall"></pre>
           </div>
         </section>
 
@@ -210,13 +216,14 @@
               <button class="button" id="refresh-dataset-versions">Refresh Versions</button>
             </div>
           </div>
+          <div id="pipeline-summary" class="metric-grid"></div>
           <div class="grid two">
             <div class="card">
-              <h3>Training Candidates</h3>
+              <h3>1. Candidates</h3>
               <div id="candidates-table" class="table-wrap"></div>
             </div>
             <div class="card">
-              <h3>Exports</h3>
+              <h3>2. Exports</h3>
               <form id="exports-filter-form" class="form-inline compact compact-bottom">
                 <input name="domain" placeholder="domain" />
                 <input name="limit" placeholder="20" value="20" />
@@ -233,7 +240,7 @@
           </div>
           <div class="grid two">
             <div class="card">
-              <h3>Dataset Imports / Versions</h3>
+              <h3>3. Imports & Versions</h3>
               <form id="dataset-imports-filter-form" class="form-inline compact compact-bottom">
                 <input name="limit" placeholder="20" value="20" />
                 <button class="button" type="submit">Filter Imports</button>
@@ -254,7 +261,7 @@
               </form>
             </div>
             <div class="card">
-              <h3>Training Runs</h3>
+              <h3>4. Training Runs</h3>
               <div class="inline-actions compact-bottom">
                 <button class="button" id="refresh-training">Refresh Training Runs</button>
               </div>
@@ -312,7 +319,8 @@
             </div>
             <div class="card">
               <h3>KPI Report</h3>
-              <pre id="kpi-output" class="output tall"></pre>
+              <div id="kpi-metrics-grid" class="metric-grid compact-top"></div>
+              <div id="kpi-output" class="table-wrap compact-top"></div>
             </div>
           </div>
         </section>
@@ -331,21 +339,21 @@
           <div class="grid two">
             <div class="card">
               <h3>Operations Summary</h3>
-              <pre id="ops-summary-output" class="output medium"></pre>
+              <div id="ops-summary-grid" class="metric-grid compact-top"></div>
             </div>
             <div class="card">
               <h3>Runtime Metrics</h3>
-              <pre id="ops-metrics-output" class="output medium"></pre>
+              <div id="ops-metrics-grid" class="metric-grid compact-top"></div>
             </div>
           </div>
           <div class="grid two">
             <div class="card">
               <h3>Streaming Telemetry</h3>
-              <pre id="ops-stream-output" class="output medium"></pre>
+              <div id="ops-stream-grid" class="metric-grid compact-top"></div>
             </div>
             <div class="card">
               <h3>Stream Summaries</h3>
-              <pre id="ops-stream-live-output" class="output medium"></pre>
+              <div id="ops-stream-live-table" class="table-wrap compact-top"></div>
             </div>
           </div>
           <div class="grid three">
@@ -413,10 +421,13 @@
               </form>
               <div id="jobs-table" class="table-wrap"></div>
             </div>
-            <div class="card">
+          </div>
+          <div id="job-detail-card" class="card hidden">
+            <div class="card-header">
               <h3>Job Detail</h3>
-              <pre id="job-detail-output" class="output tall"></pre>
+              <button class="button ghost" id="close-job-detail" type="button">Close</button>
             </div>
+            <pre id="job-detail-output" class="output tall"></pre>
           </div>
           <div class="grid two">
             <div class="card">
@@ -435,10 +446,13 @@
               </form>
               <div id="events-table" class="table-wrap"></div>
             </div>
-            <div class="card">
+          </div>
+          <div id="event-detail-card" class="card hidden">
+            <div class="card-header">
               <h3>Event Detail</h3>
-              <pre id="event-detail-output" class="output tall"></pre>
+              <button class="button ghost" id="close-event-detail" type="button">Close</button>
             </div>
+            <pre id="event-detail-output" class="output tall"></pre>
           </div>
         </section>
 
