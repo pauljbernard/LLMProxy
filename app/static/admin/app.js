@@ -352,6 +352,19 @@ function renderRawDisclosure(payload, label = "View raw JSON") {
   return details;
 }
 
+const REQUEST_RECORD_FIELDS = [
+  { key: "id", label: "Request ID", render: (value) => renderIdChip(value) },
+  { key: "domain", label: "Domain", render: (value) => `<span class="badge badge-info">${escapeHtml(value || "-")}</span>` },
+  { key: "task_type", label: "Task Type", hideEmpty: true, render: (value) => `<span class="badge badge-muted">${escapeHtml(value)}</span>` },
+  { key: "requested_model", label: "Requested Model", render: (value) => renderIdChip(value, { truncate: false }) },
+  { key: "successful", label: "Outcome", render: (value) => (value ? '<span class="badge badge-ok">Successful</span>' : '<span class="badge badge-err">Failed</span>') },
+  { key: "session_id", label: "Session", hideEmpty: true, render: (value) => renderIdChip(value) },
+  { key: "route_type", label: "Route Type", hideEmpty: true, render: (value) => `<span class="badge badge-muted">${escapeHtml(humanizeLabel(value))}</span>` },
+  { key: "quality_score", label: "Quality Score", render: (value) => (value == null ? '<span class="empty-value">Not scored</span>' : `<span class="num">${escapeHtml(formattedValue(value))}</span>`) },
+  { key: "cost_estimate", label: "Cost Estimate", render: (value) => (value == null ? '<span class="empty-value">-</span>' : renderAmount(value, { precision: 4 })) },
+  { key: "created_at", label: "Created", render: (value) => timeLabel(value) },
+];
+
 function renderRequestDetail(payload) {
   const request = payload?.request || {};
   renderMetricGrid("#request-detail-summary-grid", [
@@ -362,13 +375,10 @@ function renderRequestDetail(payload) {
     { label: "Candidates", value: String((payload?.training_candidates || []).length) },
     { label: "Responses", value: String((payload?.model_responses || []).length) },
   ]);
-  renderKeyValueTable("#request-detail-summary-table", [
-    { key: "Session", value: formattedValue(request.session_id) },
-    { key: "Route Type", value: formattedValue(request.route_type) },
-    { key: "Quality Score", value: formattedValue(request.quality_score) },
-    { key: "Cost Estimate", value: formattedValue(request.cost_estimate) },
-    { key: "Created", value: formattedValue(request.created_at) },
-  ]);
+  renderRecordView("#request-detail-summary-table", request, REQUEST_RECORD_FIELDS, {
+    rawLabel: "View raw request record",
+    emptyState: { title: "No request selected.", body: "Choose a request from the history table to see its full detail here." },
+  });
   renderSimpleTable(
     "#request-routing-table",
     "Routing Decisions",
@@ -566,20 +576,141 @@ function renderOpsRecordDetail(payload) {
   renderOutput("#ops-detail-output", payload);
 }
 
+const ROUTE_COMPARISON_RECORD_FIELDS = [
+  { key: "provider", label: "Provider: Preview → Actual", value: (c) => `${formattedValue(c.preview?.selected_provider)} -> ${formattedValue(c.actualDecision?.selected_provider)}` },
+  { key: "model", label: "Model: Preview → Actual", value: (c) => `${formattedValue(c.preview?.decision?.selected_model)} -> ${formattedValue(c.actualDecision?.selected_model)}` },
+  { key: "mode", label: "Mode: Preview → Actual", value: (c) => `${formattedValue(c.preview?.decision?.selected_mode)} -> ${formattedValue(c.actualDecision?.selected_mode)}` },
+  { key: "preview_domain", label: "Preview Domain", value: (c) => c.preview?.classification?.domain, hideEmpty: true },
+  { key: "actual_request_id", label: "Actual Request", value: (c) => c.actualDetail?.request?.id, render: (value) => renderIdChip(value) },
+];
+
 function renderRouteComparison(actualDetail) {
   const preview = state.lastRoutePreview;
-  if (!preview || !actualDetail) {
-    clearHost("#route-comparison-table");
-    return;
-  }
   const actualDecision = actualDetail?.routing_decisions?.[0] || {};
-  renderKeyValueTable("#route-comparison-table", [
-    { key: "Preview vs Actual Provider", value: `${formattedValue(preview.selected_provider)} -> ${formattedValue(actualDecision.selected_provider)}` },
-    { key: "Preview vs Actual Model", value: `${formattedValue(preview.decision?.selected_model)} -> ${formattedValue(actualDecision.selected_model)}` },
-    { key: "Preview vs Actual Mode", value: `${formattedValue(preview.decision?.selected_mode)} -> ${formattedValue(actualDecision.selected_mode)}` },
-    { key: "Preview Domain", value: formattedValue(preview.classification?.domain) },
-    { key: "Actual Request Id", value: formattedValue(actualDetail?.request?.id) },
-  ], { emptyMessage: "No route comparison available yet." });
+  const comparable = preview && actualDetail ? { preview, actualDecision, actualDetail } : null;
+  renderRecordView("#route-comparison-table", comparable, ROUTE_COMPARISON_RECORD_FIELDS, {
+    raw: false,
+    emptyState: {
+      title: "No route comparison available yet.",
+      body: "Generate a route preview, then send a chat request with the same session — the predicted route and what actually happened will line up here.",
+    },
+  });
+}
+
+const MODEL_INFO_FIELDS = [
+  { key: "id", label: "Model ID", render: (value) => renderIdChip(value, { truncate: false }) },
+  { key: "object", label: "Object Type", render: (value) => `<span class="badge badge-muted">${escapeHtml(humanizeLabel(value || "model"))}</span>` },
+];
+
+function renderModelInfoDetail(model) {
+  renderRecordView("#model-detail-summary-table", model, MODEL_INFO_FIELDS, {
+    rawLabel: "View raw model record",
+    emptyState: {
+      title: "No model selected.",
+      body: "Choose a proxy-exposed model from the table above to inspect its identifier. For its routing configuration, look up the matching entry in the Routing Policies table.",
+    },
+  });
+}
+
+const LOCAL_PACKAGE_FIELDS = [
+  { key: "model_alias", label: "Model Alias", render: (value) => renderIdChip(value, { truncate: false }) },
+  { key: "model_registry_id", label: "Registry ID", render: (value) => renderIdChip(value) },
+  { key: "base_model", label: "Base Model", render: (value) => renderIdChip(value, { truncate: false }) },
+  { key: "adapter_type", label: "Adapter Type", render: (value) => `<span class="badge badge-muted">${escapeHtml(humanizeLabel(value))}</span>` },
+  { key: "promotion_status", label: "Promotion Status", render: (value) => statusBadge(value) },
+  { key: "domains", label: "Domains", render: (value) => renderList(value, { emptyLabel: "No domains configured" }) },
+  { key: "artifact_paths", label: "Artifact Paths", render: (value) => (Array.isArray(value) && value.length ? `<pre class="value-pre">${escapeHtml(value.join("\n"))}</pre>` : '<span class="empty-value">No artifacts recorded</span>') },
+];
+
+function renderLocalPackageDetail(pkg) {
+  renderRecordView("#model-detail-summary-table", pkg, LOCAL_PACKAGE_FIELDS, {
+    rawLabel: "View raw model package record",
+    emptyState: {
+      title: "No package selected.",
+      body: "Choose a registered local package from the table above to inspect its manifest, training domains, and promotion status.",
+    },
+  });
+}
+
+const POLICY_ENTRY_RECORD_FIELDS = [
+  { key: "policy_version", label: "Policy Version", render: (value) => renderIdChip(value) },
+  { key: "entry_index", label: "Position in Policy", render: (value) => `<span class="num">${escapeHtml(formattedValue(value))}</span>` },
+  { key: "entry_id", label: "Entry ID", render: (value) => renderIdChip(value) },
+  { key: "entry_type", label: "Entry Type", render: (value) => `<span class="badge badge-muted">${escapeHtml(humanizeLabel(value))}</span>` },
+  { key: "model", label: "Model", value: (record) => record.model_alias || record.model_id, render: (value) => renderIdChip(value, { truncate: false }) },
+  { key: "provider_key", label: "Provider", render: (value) => renderIdChip(value, { truncate: false }) },
+  { key: "provider_family", label: "Provider Family", value: (record) => (record.entry_type === "frontier" ? record.provider_family : null), hideEmpty: true, render: (value) => `<span class="badge badge-muted">${escapeHtml(String(value))}</span>` },
+  { key: "runtime", label: "Runtime", hideEmpty: true, render: (value) => `<span class="badge badge-muted">${escapeHtml(String(value))}</span>` },
+  {
+    key: "deployment_mode",
+    label: "Deployment Mode",
+    render: (value) => {
+      const tone = value === "production" ? "ok" : value === "canary" ? "info" : "muted";
+      return `<span class="badge badge-${tone}">${escapeHtml(humanizeLabel(value))}</span>`;
+    },
+  },
+  { key: "canary_percent", label: "Canary Traffic", render: (value) => `<span class="num">${escapeHtml(formattedValue(Math.round((value ?? 0) * 10000) / 100))}%</span>` },
+  { key: "endpoint_url", label: "Endpoint", hideEmpty: true, render: (value) => renderIdChip(value, { truncate: false }) },
+  { key: "domains", label: "Domains", render: (value) => renderList(value, { emptyLabel: "All domains" }) },
+  { key: "task_types", label: "Task Types", hideEmpty: true, render: (value) => renderList(value, { emptyLabel: "All task types" }) },
+  { key: "tags", label: "Tags", hideEmpty: true, render: (value) => renderList(value, { emptyLabel: "No tags configured" }) },
+  { key: "labels", label: "Labels", hideEmpty: true, render: (value) => renderList(value, { emptyLabel: "No labels configured" }) },
+  { key: "regions", label: "Regions", hideEmpty: true, render: (value) => renderList(value, { emptyLabel: "No region restriction" }) },
+  { key: "fallback_chain", label: "Fallback Chain", hideEmpty: true, render: (value) => renderList((value || []).map((item) => `${item.order}: ${item.provider}/${item.model}`), { emptyLabel: "No fallback chain configured" }) },
+  { key: "decision_rationale", label: "Decision Rationale", hideEmpty: true },
+  { key: "artifact_path", label: "Artifact Path", hideEmpty: true, render: (value) => renderIdChip(value, { truncate: false }) },
+  { key: "quality_summary", label: "Quality Summary", value: (record) => (record.quality_summary && Object.keys(record.quality_summary).length ? record.quality_summary : null), hideEmpty: true, render: (value) => `<pre class="value-pre">${escapeHtml(JSON.stringify(value, null, 2))}</pre>` },
+];
+
+function renderPolicyEntryDetail(wrapper) {
+  const entry = wrapper?.entry || {};
+  const flattened = { policy_version: wrapper?.policy_version, entry_index: wrapper?.entry_index, ...entry };
+  renderRecordView("#model-detail-summary-table", flattened, POLICY_ENTRY_RECORD_FIELDS, {
+    rawLabel: "View raw policy entry record",
+    emptyState: {
+      title: "No policy entry selected.",
+      body: "Choose an entry from the Routing Policies table above to inspect its provider, routing dimensions, and rollout configuration.",
+    },
+  });
+}
+
+const POLICY_VERSION_RECORD_FIELDS = [
+  { key: "policy_version", label: "Policy Version", render: (value) => renderIdChip(value) },
+  {
+    key: "entry_count",
+    label: "Routing Entries",
+    value: (record) => (Array.isArray(record.policy?.entries) ? record.policy.entries.length : 0),
+    render: (value) => (value === 0 ? '<span class="empty-value">No routing entries in this policy version</span>' : `<span class="num">${escapeHtml(formattedValue(value))}</span>`),
+  },
+];
+
+function renderPolicyVersionDetail(policyVersion) {
+  renderRecordView("#model-detail-summary-table", policyVersion, POLICY_VERSION_RECORD_FIELDS, {
+    rawLabel: "View raw policy version record",
+    emptyState: {
+      title: "No policy version selected.",
+      body: "Choose a routing policy version from the table above to inspect it.",
+    },
+  });
+}
+
+/**
+ * `#model-detail-card` is shared by three different "Inspect" actions across the
+ * Models panel — proxy-exposed models, local packages, and routing-policy
+ * entries/versions — each handing it a structurally distinct payload. Detect
+ * which one arrived (by the field that uniquely identifies its shape) and render
+ * it with the matching specialised view rather than forcing one schema onto all four.
+ */
+function renderModelDetail(payload) {
+  if (payload && typeof payload === "object" && payload.entry && typeof payload.entry === "object") {
+    renderPolicyEntryDetail(payload);
+  } else if (payload && Array.isArray(payload.artifact_paths)) {
+    renderLocalPackageDetail(payload);
+  } else if (payload && payload.policy && typeof payload.policy === "object") {
+    renderPolicyVersionDetail(payload);
+  } else {
+    renderModelInfoDetail(payload);
+  }
 }
 
 function showDetailCard(cardSelector, outputSelector, payload) {
@@ -590,6 +721,8 @@ function showDetailCard(cardSelector, outputSelector, payload) {
   }
   if (cardSelector === "#request-detail-card") {
     renderRequestDetail(payload);
+  } else if (cardSelector === "#model-detail-card") {
+    renderModelDetail(payload);
   } else if (cardSelector === "#training-detail-card") {
     renderTrainingDetail(payload);
   } else if (cardSelector === "#evaluation-detail-card") {
@@ -599,7 +732,22 @@ function showDetailCard(cardSelector, outputSelector, payload) {
   } else if (cardSelector === "#event-detail-card") {
     renderEventDetail(payload);
   }
-  renderOutput(outputSelector, payload);
+  // `#model-detail-card` is the one card whose renderer (renderModelDetail, for
+  // every one of its four payload shapes — model info, local package, policy
+  // version, and policy entry) already builds its summary table with
+  // renderRecordView()'s default `rawLabel` raw-JSON disclosure. Re-dumping the
+  // same payload into a second, permanently-visible `<pre class="output tall">`
+  // below it would show the identical JSON twice on screen for no benefit, so
+  // that element has been removed from the markup and this call is skipped here.
+  // Every other card's renderer (request, training, evaluation, job, event)
+  // either omits an embedded raw view entirely (training/evaluation/job/event —
+  // this is their only raw view) or embeds only a sub-object of the full payload
+  // (request — its disclosure shows just `request`, not the routing decisions,
+  // model responses, candidates, etc. that this dump uniquely surfaces), so the
+  // generic dump still earns its place for those.
+  if (cardSelector !== "#model-detail-card") {
+    renderOutput(outputSelector, payload);
+  }
 }
 
 function statusBadge(value) {
@@ -634,13 +782,14 @@ function relativeTime(isoString) {
   const timestamp = new Date(isoString).getTime();
   if (Number.isNaN(timestamp)) return String(isoString);
   const diff = Date.now() - timestamp;
-  const minutes = Math.floor(diff / 60000);
+  const future = diff < 0;
+  const minutes = Math.floor(Math.abs(diff) / 60000);
   if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
+  if (minutes < 60) return future ? `in ${minutes}m` : `${minutes}m ago`;
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
+  if (hours < 24) return future ? `in ${hours}h` : `${hours}h ago`;
   const days = Math.floor(hours / 24);
-  return `${days}d ago`;
+  return future ? `in ${days}d` : `${days}d ago`;
 }
 
 function timeLabel(isoString) {
@@ -958,6 +1107,17 @@ async function refreshConfig() {
   return payload;
 }
 
+const PROVIDER_GUIDE_RECORD_FIELDS = [
+  { key: "label", label: "Provider", render: (value, row) => `<span class="cell-primary">${escapeHtml(value || row.provider_key || "Untitled provider")}</span>` },
+  { key: "provider_key", label: "Provider Key", render: (value) => renderIdChip(value, { truncate: false }) },
+  { key: "provider_family", label: "Provider Family", hideEmpty: true },
+  { key: "configured", label: "Configured", render: (value) => boolBadge(Boolean(value)) },
+  { key: "validation_mode", label: "Validation Mode", hideEmpty: true, render: (value) => `<span class="badge badge-muted">${escapeHtml(humanizeLabel(value))}</span>` },
+  { key: "recommended_base_url", label: "Recommended Base URL", hideEmpty: true, render: (value) => renderIdChip(value, { truncate: false }) },
+  { key: "config_keys", label: "Config Keys", render: (value) => renderList(value, { emptyLabel: "No configuration keys documented" }) },
+  { key: "notes", label: "Setup Notes", hideEmpty: true, render: (value) => `<pre class="value-pre">${escapeHtml((value || []).map((note) => `• ${note}`).join("\n"))}</pre>` },
+];
+
 async function refreshProviderGuides() {
   const payload = await apiFetch("/admin/api/providers/guides");
   renderMetricGrid("#provider-guide-grid", [
@@ -985,7 +1145,7 @@ async function refreshProviderGuides() {
       `;
       const actions = document.createElement("div");
       actions.className = "table-actions";
-      actions.appendChild(createActionButton("Inspect", () => renderOutput("#provider-guide-output", row), { accent: true }));
+      actions.appendChild(createActionButton("Inspect", () => renderRecordView("#provider-guide-detail", row, PROVIDER_GUIDE_RECORD_FIELDS, { rawLabel: "View raw provider guide" }), { accent: true }));
       if (row.provider_key !== "replicate") {
         actions.appendChild(createActionButton("Validate", async () => {
           const result = await apiFetch("/admin/api/providers/validate", {
@@ -1000,9 +1160,26 @@ async function refreshProviderGuides() {
       return tr;
     }, "Provider-specific guidance will appear here."),
   );
+  const guideCount = (payload.providers || []).length;
+  clearHost("#provider-guide-detail");
+  $("#provider-guide-detail")?.appendChild(buildEmptyState({
+    icon: "→",
+    title: "Select a provider to inspect.",
+    body: `${guideCount} provider guide${guideCount === 1 ? "" : "s"} available — choose “Inspect” on any row to see its full configuration, recommended endpoint, and setup notes here.`,
+  }));
   renderOutput("#provider-guide-output", payload);
   return payload;
 }
+
+const ROUTE_PREVIEW_RECORD_FIELDS = [
+  { key: "policy_version", label: "Policy Version", value: (p) => p?.decision?.policy_version, hideEmpty: true },
+  { key: "selected_provider_family", label: "Provider Family", value: (p) => p?.decision?.selected_provider_family, hideEmpty: true },
+  { key: "decision_rationale", label: "Decision Rationale", value: (p) => p?.decision?.decision_rationale, hideEmpty: true },
+  { key: "shadow_provider_keys", label: "Shadows", value: (p) => p?.shadow_provider_keys || [], render: (value) => renderList(value, { emptyLabel: "No shadow routing configured" }) },
+  { key: "fallback_chain", label: "Fallback Chain", value: (p) => (p?.decision?.fallback_chain || []).map((item) => `${item.order}: ${item.provider}/${item.model}`), render: (value) => renderList(value, { emptyLabel: "No fallback chain configured" }) },
+  { key: "route_tags", label: "Route Tags", value: (p) => p?.classification?.route_tags || [], render: (value) => renderList(value, { emptyLabel: "No route tags" }) },
+  { key: "region", label: "Region", value: (p) => p?.classification?.region, hideEmpty: true },
+];
 
 function renderRoutePreview(payload) {
   state.lastRoutePreview = payload;
@@ -1016,15 +1193,10 @@ function renderRoutePreview(payload) {
     { label: "Latency Class", value: decision.predicted_latency_class || "-" },
     { label: "Cost Class", value: decision.predicted_cost_class || "-" },
   ]);
-  renderKeyValueTable("#route-preview-table", [
-    { key: "Policy Version", value: formattedValue(decision.policy_version) },
-    { key: "Provider Family", value: formattedValue(decision.selected_provider_family) },
-    { key: "Decision Rationale", value: formattedValue(decision.decision_rationale) },
-    { key: "Shadows", value: formattedValue(payload?.shadow_provider_keys || []) },
-    { key: "Fallback Chain", value: formattedValue((decision.fallback_chain || []).map((item) => `${item.order}:${item.provider}/${item.model}`)) },
-    { key: "Route Tags", value: formattedValue(classification.route_tags || []) },
-    { key: "Region", value: formattedValue(classification.region) },
-  ], { emptyMessage: "Route preview will appear here once generated." });
+  renderRecordView("#route-preview-table", payload, ROUTE_PREVIEW_RECORD_FIELDS, {
+    rawLabel: "View raw route preview",
+    emptyState: { title: "No route preview yet.", body: "Submit the form above to preview how a request would be routed." },
+  });
   clearHost("#route-comparison-table");
   renderOutput("#route-preview-output", payload);
 }
@@ -1034,6 +1206,64 @@ async function fetchLatestRequestDetailBySession(sessionId) {
   const rows = await apiFetch(`/admin/api/proxy/requests?session_id=${encodeURIComponent(sessionId)}`);
   if (!Array.isArray(rows) || !rows.length) return null;
   return apiFetch(`/admin/api/proxy/requests/${encodeURIComponent(rows[0].id)}`);
+}
+
+const PROMPT_TEMPLATE_RECORD_FIELDS = [
+  { key: "name", label: "Name", render: (value) => `<span class="cell-primary">${escapeHtml(value || "-")}</span>` },
+  { key: "version", label: "Version", render: (value) => `<span class="badge badge-muted">v${escapeHtml(formattedValue(value))}</span>` },
+  { key: "id", label: "Template ID", render: (value) => renderIdChip(value) },
+  { key: "description", label: "Description", hideEmpty: true },
+  { key: "model_override", label: "Model Override", hideEmpty: true, render: (value) => renderIdChip(value, { truncate: false }) },
+  { key: "variables", label: "Variables", render: (value) => renderList(value, { emptyLabel: "No variables — renders as static text" }) },
+  { key: "template_text", label: "Template Text", render: (value) => `<pre class="value-pre">${escapeHtml(value || "")}</pre>` },
+  { key: "metadata", label: "Metadata", value: (record) => (record.metadata && Object.keys(record.metadata).length ? record.metadata : null), hideEmpty: true, render: (value) => `<pre class="value-pre">${escapeHtml(JSON.stringify(value, null, 2))}</pre>` },
+  { key: "created_at", label: "Created", render: (value) => timeLabel(value) },
+];
+
+function renderPromptTemplateDetail(detail) {
+  renderRecordView("#prompt-detail-output", detail, PROMPT_TEMPLATE_RECORD_FIELDS, {
+    rawLabel: "View raw prompt template record",
+    emptyState: {
+      title: "No prompt template selected.",
+      body: "Choose a version from the table above and select “Inspect” to see its full text, variables, and metadata here.",
+    },
+  });
+}
+
+const PROMPT_RENDER_RECORD_FIELDS = [
+  { key: "name", label: "Template", render: (value) => `<span class="cell-primary">${escapeHtml(value || "-")}</span>` },
+  { key: "version", label: "Version", render: (value) => `<span class="badge badge-muted">v${escapeHtml(formattedValue(value))}</span>` },
+  { key: "render_variables", label: "Variables Used", render: (value) => (value && Object.keys(value).length ? `<pre class="value-pre">${escapeHtml(JSON.stringify(value, null, 2))}</pre>` : '<span class="empty-value">No variables supplied — template has none to fill</span>') },
+  { key: "template_text", label: "Template Text", render: (value) => `<pre class="value-pre">${escapeHtml(value || "")}</pre>` },
+  { key: "rendered_text", label: "Rendered Output", render: (value) => `<pre class="value-pre">${escapeHtml(value ?? "")}</pre>` },
+];
+
+function renderPromptRenderResult(detail) {
+  renderRecordView("#prompt-detail-output", detail, PROMPT_RENDER_RECORD_FIELDS, {
+    rawLabel: "View raw render response",
+    emptyState: {
+      title: "No render preview yet.",
+      body: "Choose a version from the table above and select “Render” to fill its placeholders with sample values and preview the result here.",
+    },
+  });
+}
+
+const PROMPT_DIFF_RECORD_FIELDS = [
+  { key: "name", label: "Template", render: (value) => `<span class="cell-primary">${escapeHtml(value || "-")}</span>` },
+  { key: "version", label: "Version: From → To", value: (record) => `v${formattedValue(record.from_version)} -> v${formattedValue(record.to_version)}` },
+  { key: "variables", label: "Variables: From → To", value: (record) => `${formattedValue(record.from_variables)} -> ${formattedValue(record.to_variables)}` },
+  { key: "model_override", label: "Model Override: From → To", value: (record) => `${formattedValue(record.from_model_override)} -> ${formattedValue(record.to_model_override)}` },
+  { key: "unified_diff", label: "Unified Diff", render: (value) => (value ? `<pre class="value-pre">${escapeHtml(value)}</pre>` : '<span class="empty-value">Template text is identical between these versions — see Variables / Model Override above for what else changed.</span>') },
+];
+
+function renderPromptDiffResult(detail) {
+  renderRecordView("#prompt-detail-output", detail, PROMPT_DIFF_RECORD_FIELDS, {
+    rawLabel: "View raw diff response",
+    emptyState: {
+      title: "No version comparison yet.",
+      body: "Choose a version numbered 2 or higher from the table above and select “Diff Prev” to compare its template text against the version immediately before it.",
+    },
+  });
 }
 
 async function refreshPrompts() {
@@ -1054,7 +1284,7 @@ async function refreshPrompts() {
       actions.className = "table-actions";
       actions.appendChild(createActionButton("Inspect", async () => {
         const detail = await apiFetch(`/admin/api/prompts/${encodeURIComponent(row.name)}?version=${encodeURIComponent(row.version)}`);
-        renderOutput("#prompt-detail-output", detail);
+        renderPromptTemplateDetail(detail);
       }, { accent: true }));
       actions.appendChild(createActionButton("Render", async () => {
         const variables = Object.fromEntries((row.variables || []).map((name) => [name, `sample_${name}`]));
@@ -1062,20 +1292,35 @@ async function refreshPrompts() {
           method: "POST",
           body: JSON.stringify({ version: row.version, variables }),
         });
-        renderOutput("#prompt-detail-output", detail);
+        renderPromptRenderResult(detail);
       }));
       if (Number(row.version || 0) > 1) {
         actions.appendChild(createActionButton("Diff Prev", async () => {
           const detail = await apiFetch(
             `/admin/api/prompts/${encodeURIComponent(row.name)}/diff?from_version=${encodeURIComponent(Number(row.version) - 1)}&to_version=${encodeURIComponent(row.version)}`,
           );
-          renderOutput("#prompt-detail-output", detail);
+          renderPromptDiffResult(detail);
         }));
       }
       tr.children[4].appendChild(actions);
       return tr;
     }, "No prompt templates registered yet."),
   );
+  const promptCount = (payload || []).length;
+  clearHost("#prompt-detail-output");
+  if (!promptCount) {
+    $("#prompt-detail-output")?.appendChild(buildEmptyState({
+      icon: "✎",
+      title: "No prompt templates registered yet.",
+      body: "Create one using the form to the right — its versions will appear here for inspection, rendering, and diffing.",
+    }));
+  } else {
+    $("#prompt-detail-output")?.appendChild(buildEmptyState({
+      icon: "→",
+      title: "Select a prompt version to inspect.",
+      body: `${promptCount} version${promptCount === 1 ? "" : "s"} available — choose “Inspect” to view a template, “Render” to preview it filled with sample variables, or “Diff Prev” to compare it against the version before it.`,
+    }));
+  }
   return payload;
 }
 
@@ -1333,6 +1578,18 @@ async function refreshObservability() {
   return payload;
 }
 
+const MCP_SERVER_RECORD_FIELDS = [
+  { key: "server", label: "Server", render: (value) => `<span class="cell-primary">${escapeHtml(value || "-")}</span>` },
+  { key: "transport", label: "Transport", render: (value) => `<span class="badge badge-muted">${escapeHtml(value || "stdio")}</span>` },
+  { key: "configured", label: "Configured", render: (value) => boolBadge(Boolean(value)) },
+  { key: "command", label: "Command", hideEmpty: true, render: (value) => renderIdChip(value, { truncate: false }) },
+  { key: "cwd", label: "Working Directory", hideEmpty: true, render: (value) => renderIdChip(value, { truncate: false }) },
+  { key: "timeout_seconds", label: "Timeout", render: (value) => `<span class="num">${escapeHtml(formattedValue(value))}s</span>` },
+  { key: "tool_count", label: "Tools Exposed", render: (value) => `<span class="num">${escapeHtml(formattedValue(value ?? 0))}</span>` },
+  { key: "tools", label: "Tools", hideEmpty: true, render: (value) => `<pre class="value-pre">${escapeHtml((value || []).map((tool) => `${tool.name}${tool.description ? ` — ${tool.description}` : ""}`).join("\n"))}</pre>` },
+  { key: "error", label: "Error", hideEmpty: true, render: (value) => `<pre class="value-pre">${escapeHtml(value)}</pre>` },
+];
+
 async function refreshMcpServers() {
   const payload = await apiFetch("/admin/api/mcp/servers");
   renderMetricGrid("#mcp-server-grid", [
@@ -1362,7 +1619,7 @@ async function refreshMcpServers() {
       `;
       const actions = document.createElement("div");
       actions.className = "table-actions";
-      actions.appendChild(createActionButton("Inspect", () => renderOutput("#mcp-server-output", row), { accent: true }));
+      actions.appendChild(createActionButton("Inspect", () => renderRecordView("#mcp-server-detail", row, MCP_SERVER_RECORD_FIELDS, { rawLabel: "View raw server config" }), { accent: true }));
       actions.appendChild(createActionButton("Validate", async () => {
         const result = await apiFetch(`/admin/api/mcp/servers/${encodeURIComponent(row.server)}/validate`, {
           method: "POST",
@@ -1375,6 +1632,21 @@ async function refreshMcpServers() {
       return tr;
     }, "Configured MCP servers will appear here."),
   );
+  const serverCount = (payload.servers || []).length;
+  clearHost("#mcp-server-detail");
+  if (!serverCount) {
+    $("#mcp-server-detail")?.appendChild(buildEmptyState({
+      icon: "🔌",
+      title: "No MCP servers configured.",
+      body: "Configure servers via LLMPROXY_MCP_SERVERS to expose their tools through the gateway.",
+    }));
+  } else {
+    $("#mcp-server-detail")?.appendChild(buildEmptyState({
+      icon: "→",
+      title: "Select a server to inspect.",
+      body: `${serverCount} server${serverCount === 1 ? "" : "s"} configured — choose “Inspect” on any row to see its transport, command, and exposed tools here.`,
+    }));
+  }
   renderOutput("#mcp-server-output", payload);
   return payload;
 }
@@ -1416,6 +1688,30 @@ async function refreshRequests(filters = {}) {
   );
 }
 
+const STREAMING_VALIDATION_RECORD_FIELDS = [
+  { key: "success", label: "Result", render: (value) => (value ? '<span class="badge badge-ok">Validated</span>' : '<span class="badge badge-err">Failed</span>') },
+  { key: "provider_key", label: "Provider", render: (value) => renderIdChip(value, { truncate: false }) },
+  { key: "provider_family", label: "Provider Family", hideEmpty: true, render: (value) => `<span class="badge badge-muted">${escapeHtml(humanizeLabel(value))}</span>` },
+  { key: "model", label: "Model", hideEmpty: true, render: (value) => renderIdChip(value, { truncate: false }) },
+  { key: "error", label: "Error Detail", hideEmpty: true, render: (value) => `<pre class="value-pre">${escapeHtml(value)}</pre>` },
+  { key: "preview_text", label: "Streamed Preview", hideEmpty: true, render: (value) => `<pre class="value-pre">${escapeHtml(value)}</pre>` },
+  { key: "finish_reason", label: "Finish Reason", hideEmpty: true, render: (value) => `<span class="badge badge-muted">${escapeHtml(humanizeLabel(value))}</span>` },
+  { key: "input_tokens", label: "Input Tokens", hideEmpty: true, render: (value) => `<span class="num">${escapeHtml(formattedValue(value))}</span>` },
+  { key: "output_tokens", label: "Output Tokens", hideEmpty: true, render: (value) => `<span class="num">${escapeHtml(formattedValue(value))}</span>` },
+  { key: "validated_by", label: "Validated By", hideEmpty: true, render: (value) => `<span class="badge badge-muted">${escapeHtml(humanizeLabel(value))}</span>` },
+];
+
+function showStreamingValidationResult(result) {
+  renderRecordView("#streaming-support-output", result, STREAMING_VALIDATION_RECORD_FIELDS, {
+    rawLabel: "View raw validation response",
+    emptyState: {
+      icon: "▷",
+      title: "No validation run yet.",
+      body: "Choose “Validate Frontier Stream” below to confirm a configured provider streams correctly and preview what it returns.",
+    },
+  });
+}
+
 async function refreshStreamingSupport() {
   const payload = await apiFetch("/admin/api/proxy/streaming-support");
   const host = $("#streaming-support-table");
@@ -1433,7 +1729,7 @@ async function refreshStreamingSupport() {
       return tr;
     }, "Provider streaming support will render here once configuration is loaded."),
   );
-  renderOutput("#streaming-support-output", payload);
+  showStreamingValidationResult(null);
   return payload;
 }
 
@@ -1451,7 +1747,7 @@ async function refreshModels() {
       `;
       const actions = document.createElement("div");
       actions.className = "table-actions";
-      actions.appendChild(createActionButton("Inspect", () => showDetailCard("#model-detail-card", "#model-detail-output", row), { accent: true }));
+      actions.appendChild(createActionButton("Inspect", () => showDetailCard("#model-detail-card", null, row), { accent: true }));
       tr.lastElementChild.appendChild(actions);
       return tr;
     }, "Proxy-exposed models will appear here."),
@@ -1475,7 +1771,7 @@ async function refreshLocalModels() {
       `;
       const actions = document.createElement("div");
       actions.className = "table-actions";
-      actions.appendChild(createActionButton("Inspect", () => showDetailCard("#model-detail-card", "#model-detail-output", row), { accent: true }));
+      actions.appendChild(createActionButton("Inspect", () => showDetailCard("#model-detail-card", null, row), { accent: true }));
       tr.lastElementChild.appendChild(actions);
       return tr;
     }, "Registered local packages will appear here."),
@@ -1533,7 +1829,7 @@ async function refreshPolicies() {
       `;
       const actions = document.createElement("div");
       actions.className = "table-actions";
-      actions.appendChild(createActionButton("Inspect", () => showDetailCard("#model-detail-card", "#model-detail-output", row.detail), { accent: true }));
+      actions.appendChild(createActionButton("Inspect", () => showDetailCard("#model-detail-card", null, row.detail), { accent: true }));
       if (row.detail?.entry?.entry_type === "frontier") {
         actions.appendChild(createActionButton("Edit", () => {
           const entry = row.detail.entry;
@@ -1542,7 +1838,8 @@ async function refreshPolicies() {
           setFieldValue("#frontier-policy-form", "model_id", entry.model_id || "");
           setFieldValue("#frontier-policy-form", "domains", (entry.domains || []).join(","));
           setFieldValue("#frontier-policy-form", "task_types", (entry.task_types || []).join(","));
-          setFieldValue("#frontier-policy-form", "tags", (entry.tags || entry.labels || []).join(","));
+          setFieldValue("#frontier-policy-form", "tags", (entry.tags || []).join(","));
+          setFieldValue("#frontier-policy-form", "labels", (entry.labels || []).join(","));
           setFieldValue("#frontier-policy-form", "regions", (entry.regions || []).join(","));
           setFieldValue("#frontier-policy-form", "deployment_mode", entry.deployment_mode || "production");
           setFieldValue("#frontier-policy-form", "canary_percent", String(entry.canary_percent ?? 0));
@@ -1606,6 +1903,27 @@ async function refreshCandidates() {
   return payload;
 }
 
+const EXPORT_RECORD_FIELDS = [
+  { key: "dataset_export_id", label: "Export ID", render: (value) => renderIdChip(value) },
+  { key: "domain", label: "Domain", render: (value) => `<span class="cell-primary">${escapeHtml(value || "-")}</span>` },
+  { key: "record_count", label: "Records", render: (value) => `<span class="num">${escapeHtml(formattedValue(value))}</span>` },
+  { key: "schema_version", label: "Schema Version" },
+  { key: "manifest_path", label: "Manifest Path", render: (value) => renderIdChip(value, { truncate: false }) },
+  { key: "data_path", label: "Data Path", render: (value) => renderIdChip(value, { truncate: false }) },
+  { key: "id", label: "Record ID", render: (value) => renderIdChip(value) },
+  { key: "created_at", label: "Created", render: (value) => timeLabel(value) },
+];
+
+function renderExportDetail(detail) {
+  renderRecordView("#export-detail", detail, EXPORT_RECORD_FIELDS, {
+    rawLabel: "View raw export record",
+    emptyState: {
+      title: "No export selected.",
+      body: "Choose an export from the table above and select “Inspect” to see its manifest path, data path, and record count here.",
+    },
+  });
+}
+
 async function refreshExports() {
   const data = new FormData($("#exports-filter-form"));
   const params = new URLSearchParams();
@@ -1625,7 +1943,7 @@ async function refreshExports() {
       `;
       const actions = document.createElement("div");
       actions.className = "table-actions";
-      actions.appendChild(createActionButton("Inspect", () => renderOutput("#exports-output", row), { accent: true }));
+      actions.appendChild(createActionButton("Inspect", () => renderExportDetail(row), { accent: true }));
       actions.appendChild(
         createActionButton("Use for Import", () => {
           setFieldValue("#dataset-import-form", "dataset_export_id", row.dataset_export_id);
@@ -1638,8 +1956,48 @@ async function refreshExports() {
       return tr;
     }, "Create a dataset export to move approved candidates into the learner pipeline."),
   );
+  const exportCount = (payload || []).length;
+  clearHost("#export-detail");
+  if (!exportCount) {
+    $("#export-detail")?.appendChild(buildEmptyState({
+      icon: "✎",
+      title: "No exports created yet.",
+      body: "Bundle approved, export-eligible candidates into a dataset using the form below — each export will appear here for inspection and reuse as an import source.",
+    }));
+  } else {
+    $("#export-detail")?.appendChild(buildEmptyState({
+      icon: "→",
+      title: "Select an export to inspect.",
+      body: `${exportCount} export${exportCount === 1 ? "" : "s"} available — choose “Inspect” to see its manifest and data paths, or “Use for Import” to copy its IDs into the import form below.`,
+    }));
+  }
   renderOutput("#exports-output", payload);
   return payload;
+}
+
+const DATASET_IMPORT_RECORD_FIELDS = [
+  { key: "id", label: "Import ID", render: (value) => renderIdChip(value) },
+  { key: "dataset_export_id", label: "Source Export", render: (value) => renderIdChip(value) },
+  { key: "status", label: "Status", render: (value) => statusBadge(value) },
+  { key: "record_count", label: "Records Imported", render: (value) => `<span class="num">${escapeHtml(formattedValue(value))}</span>` },
+  {
+    key: "quarantined_count",
+    label: "Quarantined",
+    render: (value) => (value ? `<span class="badge badge-warn">${escapeHtml(formattedValue(value))} duplicate${Number(value) === 1 ? "" : "s"} dropped</span>` : '<span class="empty-value">None — every record was unique</span>'),
+  },
+  { key: "manifest_path", label: "Manifest Path", hideEmpty: true, render: (value) => renderIdChip(value, { truncate: false }) },
+  { key: "data_path", label: "Data Path", hideEmpty: true, render: (value) => renderIdChip(value, { truncate: false }) },
+  { key: "created_at", label: "Imported", render: (value) => timeLabel(value) },
+];
+
+function renderDatasetImportDetail(detail) {
+  renderRecordView("#dataset-detail", detail, DATASET_IMPORT_RECORD_FIELDS, {
+    rawLabel: "View raw import record",
+    emptyState: {
+      title: "Nothing selected yet.",
+      body: "Choose an import or version from the tables above and select “Inspect” to see its full record here.",
+    },
+  });
 }
 
 async function refreshDatasetImports() {
@@ -1661,12 +2019,34 @@ async function refreshDatasetImports() {
       `;
       const actions = document.createElement("div");
       actions.className = "table-actions";
-      actions.appendChild(createActionButton("Inspect", () => renderOutput("#dataset-output", row), { accent: true }));
+      actions.appendChild(createActionButton("Inspect", () => renderDatasetImportDetail(row), { accent: true }));
       tr.lastElementChild.appendChild(actions);
       return tr;
     }, "Imported datasets will appear here after processing completes."),
   );
   return payload;
+}
+
+const DATASET_VERSION_RECORD_FIELDS = [
+  { key: "version_name", label: "Version", render: (value) => `<span class="cell-primary">${escapeHtml(value || "-")}</span>` },
+  { key: "domain", label: "Domain" },
+  { key: "record_count", label: "Records", render: (value) => `<span class="num">${escapeHtml(formattedValue(value))}</span>` },
+  { key: "source_import_id", label: "Source Import", render: (value) => renderIdChip(value) },
+  { key: "train_path", label: "Train Split", render: (value) => renderIdChip(value, { truncate: false }) },
+  { key: "validation_path", label: "Validation Split", render: (value) => renderIdChip(value, { truncate: false }) },
+  { key: "test_path", label: "Test Split", render: (value) => renderIdChip(value, { truncate: false }) },
+  { key: "id", label: "Record ID", render: (value) => renderIdChip(value) },
+  { key: "created_at", label: "Created", render: (value) => timeLabel(value) },
+];
+
+function renderDatasetVersionDetail(detail) {
+  renderRecordView("#dataset-detail", detail, DATASET_VERSION_RECORD_FIELDS, {
+    rawLabel: "View raw dataset version record",
+    emptyState: {
+      title: "Nothing selected yet.",
+      body: "Choose an import or version from the tables above and select “Inspect” to see its full record here.",
+    },
+  });
 }
 
 async function refreshDatasetVersions() {
@@ -1688,7 +2068,7 @@ async function refreshDatasetVersions() {
       `;
       const actions = document.createElement("div");
       actions.className = "table-actions";
-      actions.appendChild(createActionButton("Inspect", () => renderOutput("#dataset-output", row), { accent: true }));
+      actions.appendChild(createActionButton("Inspect", () => renderDatasetVersionDetail(row), { accent: true }));
       actions.appendChild(
         createActionButton("Train", () => {
           setFieldValue("#training-form", "dataset_version_id", row.id);
@@ -1705,6 +2085,26 @@ async function refreshDatasetVersions() {
 async function refreshDatasetViews() {
   const imports = await refreshDatasetImports();
   const versions = await refreshDatasetVersions();
+  // #dataset-detail is shared by both the Imports and Versions "Inspect" actions
+  // (each hands it a structurally distinct payload via its own renderer), so its
+  // empty state is seeded here — once, from combined counts — rather than from
+  // either sub-refresh, which would otherwise overwrite each other's message.
+  const importCount = (imports || []).length;
+  const versionCount = (versions || []).length;
+  clearHost("#dataset-detail");
+  if (!importCount && !versionCount) {
+    $("#dataset-detail")?.appendChild(buildEmptyState({
+      icon: "✎",
+      title: "Nothing imported yet.",
+      body: "Create a dataset export, then run an import from it — both the import record and the dataset version it produces will appear here for inspection.",
+    }));
+  } else {
+    $("#dataset-detail")?.appendChild(buildEmptyState({
+      icon: "→",
+      title: "Select an import or version to inspect.",
+      body: `${importCount} import${importCount === 1 ? "" : "s"} and ${versionCount} version${versionCount === 1 ? "" : "s"} available — choose “Inspect” on any row above to see its full record here.`,
+    }));
+  }
   renderOutput("#dataset-output", { imports, versions });
   return { imports, versions };
 }
@@ -2238,6 +2638,13 @@ async function initialize() {
     };
     try {
       const result = await withLoading(event.submitter, () => apiFetch("/v1/embeddings", { method: "POST", body: JSON.stringify(body) }));
+      const vectors = result?.data || [];
+      renderMetricGrid("#embeddings-summary-grid", [
+        { label: "Model", value: result?.model || "-" },
+        { label: "Vectors Returned", value: String(vectors.length) },
+        { label: "Dimensions", value: vectors[0]?.embedding ? String(vectors[0].embedding.length) : "-" },
+        { label: "Tokens Used", value: result?.usage?.total_tokens != null ? String(result.usage.total_tokens) : "-" },
+      ]);
       renderOutput("#embeddings-output", result);
       showToast("Embeddings generated.", "ok");
     } catch (error) {
@@ -2310,7 +2717,8 @@ async function initialize() {
           prompt: data.get("prompt") || "Say hello briefly.",
         }),
       }));
-      renderOutput("#streaming-support-output", result);
+      showStreamingValidationResult(result);
+      $("#streaming-support-output")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
       logConsole("streaming validation", result);
       showToast(result.success ? "Streaming validation succeeded." : "Streaming validation returned an operator-visible failure.", result.success ? "ok" : "warn");
     } catch (error) {
@@ -2445,7 +2853,7 @@ async function initialize() {
       domains: csv(String(data.get("domains") || "")),
       task_types: csv(String(data.get("task_types") || "")),
       tags: csv(String(data.get("tags") || "")),
-      labels: csv(String(data.get("tags") || "")),
+      labels: csv(String(data.get("labels") || "")),
       regions: csv(String(data.get("regions") || "")),
       deployment_mode: data.get("deployment_mode"),
       canary_percent: Number(data.get("canary_percent") || 0),
@@ -2606,7 +3014,7 @@ async function initialize() {
     };
     try {
       const result = await withLoading(event.submitter, () => apiFetch("/admin/api/prompts", { method: "POST", body: JSON.stringify(body) }));
-      renderOutput("#prompt-template-output", result);
+      renderRecordView("#prompt-template-output", result, PROMPT_TEMPLATE_RECORD_FIELDS, { rawLabel: "View raw save response" });
       showToast(`Prompt template saved as ${result.name} v${result.version}.`, "ok");
       await refreshPrompts();
     } catch (error) {

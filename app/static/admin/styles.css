@@ -300,6 +300,18 @@ textarea {
   margin: 0;
 }
 
+.field-hint code,
+.card-subtitle code,
+p code {
+  font-family: var(--mono);
+  font-size: 0.92em;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 1px 5px;
+  color: var(--ink-2);
+}
+
 .field.invalid input,
 .field.invalid select,
 .field.invalid textarea {
@@ -705,9 +717,29 @@ input[type="number"] {
   border-top: none;
 }
 
-.record-view dd.empty-value {
+.record-view dd .empty-value {
   color: var(--muted);
   font-style: italic;
+}
+
+/* For fields whose value is pre-formatted prose — streamed previews, rendered
+   templates, unified diffs — that must keep its whitespace/newlines intact
+   rather than being flattened into inline text by `formattedValue`. */
+.record-view dd .value-pre {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: var(--sp-3);
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 280px;
+  overflow: auto;
 }
 
 .record-view + .raw-disclosure {
