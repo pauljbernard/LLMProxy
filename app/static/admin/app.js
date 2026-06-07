@@ -35,16 +35,34 @@ function logConsole(label, payload) {
   output.textContent = `[${stamp}] ${label}\n${rendered}\n\n${output.textContent}`;
 }
 
+const TOAST_GLYPHS = { ok: "✓", err: "✕", warn: "!", info: "i" };
+
 function showToast(message, tone = "info") {
   const region = $("#toast-region");
   if (!region) return;
   const toast = document.createElement("div");
   toast.className = `toast ${tone}`;
-  toast.textContent = message;
+  toast.setAttribute("role", tone === "err" ? "alert" : "status");
+  toast.innerHTML = `
+    <span class="toast-icon" aria-hidden="true">${TOAST_GLYPHS[tone] || TOAST_GLYPHS.info}</span>
+    <span class="toast-message"></span>
+    <span class="toast-dismiss-hint" aria-hidden="true">dismiss</span>
+  `;
+  toast.querySelector(".toast-message").textContent = message;
   region.appendChild(toast);
-  window.setTimeout(() => {
-    toast.remove();
-  }, 3500);
+
+  let dismissed = false;
+  const dismiss = () => {
+    if (dismissed) return;
+    dismissed = true;
+    window.clearTimeout(timer);
+    toast.classList.add("leaving");
+    toast.addEventListener("animationend", () => toast.remove(), { once: true });
+    // Fallback in case the animation event doesn't fire (e.g. reduced-motion).
+    window.setTimeout(() => toast.remove(), 400);
+  };
+  toast.addEventListener("click", dismiss);
+  const timer = window.setTimeout(dismiss, 4200);
 }
 
 function setStatus(text, tone = "info") {
@@ -143,13 +161,38 @@ function clearHost(selector) {
   }
 }
 
+function buildEmptyState(config = {}) {
+  const { icon = "□", title = "No data yet.", body = "", action = null } =
+    typeof config === "string" ? { body: config } : config;
+  const wrap = document.createElement("div");
+  wrap.className = "empty-state";
+  wrap.innerHTML = `
+    <div class="empty-icon" aria-hidden="true">${escapeHtml(icon)}</div>
+    <strong>${escapeHtml(title)}</strong>
+    ${body ? `<p>${escapeHtml(body)}</p>` : ""}
+  `;
+  if (action) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "button tonal";
+    button.textContent = action.label;
+    button.addEventListener("click", action.onClick);
+    wrap.appendChild(button);
+  }
+  return wrap;
+}
+
 function renderMetricGrid(selector, items) {
   const host = $(selector);
   if (!host) return;
   host.innerHTML = "";
   const entries = items.filter((item) => item && item.label);
   if (!entries.length) {
-    host.innerHTML = '<div class="empty-state"><strong>No metrics available.</strong>Metrics will appear here when data is available.</div>';
+    host.appendChild(buildEmptyState({
+      icon: "Σ",
+      title: "No metrics available.",
+      body: "Metrics will appear here once there is activity to summarize.",
+    }));
     return;
   }
   entries.forEach((item) => {
@@ -226,6 +269,87 @@ function formattedValue(value) {
   if (Array.isArray(value)) return value.join(", ") || "-";
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
+}
+
+function renderAmount(value, { currency = "$", precision = 2, zeroMuted = true } = {}) {
+  if (value == null || value === "") return '<span class="amount empty-value">-</span>';
+  const numeric = Number(value);
+  if (Number.isNaN(numeric)) return escapeHtml(String(value));
+  const formatted = numeric.toLocaleString(undefined, { minimumFractionDigits: precision, maximumFractionDigits: precision });
+  const zeroClass = zeroMuted && numeric === 0 ? " zero" : "";
+  return `<span class="amount${zeroClass}"><span class="currency-symbol">${escapeHtml(currency)}</span>${escapeHtml(formatted)}</span>`;
+}
+
+function renderIdChip(value, { truncate = true } = {}) {
+  if (!value) return '<span class="amount empty-value">-</span>';
+  return `<span class="id-chip${truncate ? " truncate" : ""}" title="${escapeHtml(String(value))}">${escapeHtml(String(value))}</span>`;
+}
+
+function renderList(values, { emptyLabel = "None configured", limit = 8 } = {}) {
+  const items = (Array.isArray(values) ? values : [values]).filter((item) => item != null && item !== "");
+  if (!items.length) return `<span class="empty-value">${escapeHtml(emptyLabel)}</span>`;
+  const shown = items.slice(0, limit).map((item) => `<span class="badge badge-muted">${escapeHtml(String(item))}</span>`);
+  if (items.length > limit) shown.push(`<span class="badge badge-muted">+${items.length - limit} more</span>`);
+  return shown.join("");
+}
+
+/**
+ * Renders a record as a labeled definition-list ("commercial" detail view) instead
+ * of a raw JSON dump. `fields` is an array of either field-key strings or
+ * `{ key, label, render(value, record), hideEmpty }` descriptors; `render` receives
+ * the raw value and may return trusted HTML (badges, amounts, id chips, etc).
+ * The original payload remains available behind a collapsed "View raw JSON" disclosure
+ * so operators who need the wire format never lose it — they just stop needing it by default.
+ */
+function renderRecordView(selector, record, fields, options = {}) {
+  const host = $(selector);
+  if (!host) return;
+  host.innerHTML = "";
+  const hasRecord = record && (Array.isArray(record) ? record.length : Object.keys(record).length);
+  if (!hasRecord) {
+    host.appendChild(buildEmptyState(options.emptyState || {
+      title: "Nothing to show yet.",
+      body: "Details will appear here once a record is selected.",
+    }));
+    return;
+  }
+  const dl = document.createElement("dl");
+  dl.className = "record-view";
+  fields.forEach((field) => {
+    const descriptor = typeof field === "string" ? { key: field } : field;
+    const key = descriptor.key;
+    const value = descriptor.value ? descriptor.value(record) : record?.[key];
+    if (descriptor.hideEmpty && (value == null || value === "" || (Array.isArray(value) && !value.length))) return;
+    const dt = document.createElement("dt");
+    dt.textContent = descriptor.label || humanizeLabel(key);
+    const dd = document.createElement("dd");
+    if (descriptor.render) {
+      dd.innerHTML = descriptor.render(value, record);
+    } else if (value == null || value === "") {
+      dd.innerHTML = '<span class="empty-value">Not set</span>';
+    } else {
+      dd.textContent = formattedValue(value);
+    }
+    dl.appendChild(dt);
+    dl.appendChild(dd);
+  });
+  host.appendChild(dl);
+  if (options.raw !== false) {
+    host.appendChild(renderRawDisclosure(record, options.rawLabel));
+  }
+}
+
+function renderRawDisclosure(payload, label = "View raw JSON") {
+  const details = document.createElement("details");
+  details.className = "raw-disclosure";
+  const summary = document.createElement("summary");
+  summary.textContent = label;
+  const pre = document.createElement("pre");
+  pre.className = "output compact";
+  pre.textContent = JSON.stringify(payload, null, 2);
+  details.appendChild(summary);
+  details.appendChild(pre);
+  return details;
 }
 
 function renderRequestDetail(payload) {
@@ -653,7 +777,7 @@ function parseJsonObject(value, fieldName) {
   return parsed;
 }
 
-function makeTable(columns, rows, rowRenderer, emptyMessage = "No records available yet.") {
+function makeTable(columns, rows, rowRenderer, emptyState = "No records available yet.") {
   const table = document.createElement("table");
   const thead = document.createElement("thead");
   const headRow = document.createElement("tr");
@@ -669,7 +793,8 @@ function makeTable(columns, rows, rowRenderer, emptyMessage = "No records availa
     const tr = document.createElement("tr");
     const td = document.createElement("td");
     td.colSpan = columns.length;
-    td.innerHTML = `<div class="empty-state"><strong>No data yet.</strong>${escapeHtml(emptyMessage)}</div>`;
+    const config = typeof emptyState === "string" ? { title: "No data yet.", body: emptyState } : emptyState;
+    td.appendChild(buildEmptyState(config));
     tr.appendChild(td);
     tbody.appendChild(tr);
   } else {
@@ -962,6 +1087,26 @@ function formatVirtualKeyLimits(row) {
   return parts.join(" / ") || "-";
 }
 
+// `<input type="datetime-local">` speaks in wall-clock-local "YYYY-MM-DDTHH:mm" with
+// no timezone, while the API speaks in UTC ISO-8601. These two helpers do the
+// conversion at the edges so the operator only ever sees and picks a local time —
+// never has to hand-author a UTC timestamp string.
+function toDatetimeLocalValue(isoString) {
+  if (!isoString) return "";
+  const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function fromDatetimeLocalValue(value) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return null;
+  const date = new Date(trimmed);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString();
+}
+
 function populateVirtualKeyForm(row = {}) {
   setFieldValue("#virtual-key-form", "key_id", row.id || "");
   setFieldValue("#virtual-key-form", "display_name", row.display_name || "");
@@ -971,9 +1116,36 @@ function populateVirtualKeyForm(row = {}) {
   setFieldValue("#virtual-key-form", "rpm_limit", row.rpm_limit ?? "");
   setFieldValue("#virtual-key-form", "tpm_limit", row.tpm_limit ?? "");
   setFieldValue("#virtual-key-form", "max_budget_usd", row.max_budget_usd ?? "");
-  setFieldValue("#virtual-key-form", "budget_reset_period", row.budget_reset_period || "");
-  setFieldValue("#virtual-key-form", "budget_reset_at", row.budget_reset_at || "");
+  setFieldValue("#virtual-key-form", "budget_reset_period", row.budget_reset_period || "monthly");
+  setFieldValue("#virtual-key-form", "budget_reset_at", toDatetimeLocalValue(row.budget_reset_at));
   setFieldValue("#virtual-key-form", "status", row.status || "active");
+  $("#virtual-key-form")?.classList.toggle("is-editing", Boolean(row.id));
+  const heading = $("#virtual-key-form-heading");
+  if (heading) heading.textContent = row.id ? `Editing ${row.display_name || row.key_prefix || "virtual key"}` : "Issue a new virtual key";
+  const submitButton = $("#virtual-key-form button[type='submit']");
+  if (submitButton) submitButton.textContent = row.id ? "Save Changes" : "Issue Virtual Key";
+}
+
+const VIRTUAL_KEY_RECORD_FIELDS = [
+  { key: "display_name", label: "Name", render: (value, row) => `<span class="cell-primary">${escapeHtml(value || row.key_prefix || "Untitled key")}</span>` },
+  { key: "key_prefix", label: "Key Prefix", render: (value) => renderIdChip(value, { truncate: false }) },
+  { key: "id", label: "Key ID", render: (value) => renderIdChip(value) },
+  { key: "token", label: "Bearer Token", hideEmpty: true, render: (value) => `${renderIdChip(value, { truncate: false })} <span class="badge badge-warn">Shown once — store it now</span>` },
+  { key: "owner_id", label: "Owner", hideEmpty: true },
+  { key: "role", label: "Role", render: (value) => `<span class="badge badge-info">${escapeHtml(value || "api")}</span>` },
+  { key: "status", label: "Status", render: (value) => statusBadge(value || "pending") },
+  { key: "models_allowed", label: "Models Allowed", render: (value) => renderList(value, { emptyLabel: "All registered models" }) },
+  { key: "rpm_limit", label: "Requests / Minute", render: (value) => (value == null ? '<span class="empty-value">Unlimited</span>' : `<span class="num">${escapeHtml(String(value))}</span>`) },
+  { key: "tpm_limit", label: "Tokens / Minute", render: (value) => (value == null ? '<span class="empty-value">Unlimited</span>' : `<span class="num">${escapeHtml(String(value))}</span>`) },
+  { key: "max_budget_usd", label: "Budget Ceiling", render: (value) => (value == null ? '<span class="empty-value">No ceiling set</span>' : renderAmount(value)) },
+  { key: "spend_usd", label: "Spend To Date", render: (value) => renderAmount(value || 0, { precision: 4 }) },
+  { key: "budget_reset_period", label: "Budget Resets", hideEmpty: true, render: (value) => `<span class="badge badge-muted">${escapeHtml(humanizeLabel(value))}</span>` },
+  { key: "budget_reset_at", label: "Next Reset", render: (value) => (value ? timeLabel(value) : '<span class="empty-value">Not scheduled</span>') },
+  { key: "created_at", label: "Issued", hideEmpty: true, render: (value) => timeLabel(value) },
+];
+
+function showVirtualKeyRecord(record, { rawLabel } = {}) {
+  renderRecordView("#virtual-keys-output", record, VIRTUAL_KEY_RECORD_FIELDS, { rawLabel });
 }
 
 async function refreshVirtualKeys() {
@@ -990,40 +1162,79 @@ async function refreshVirtualKeys() {
     makeTable(["Key", "Role", "Limits", "Spend", "Status", "Actions"], payload || [], (row) => {
       const tr = document.createElement("tr");
       tr.innerHTML = `
-        <td><strong>${escapeHtml(row.display_name || row.key_prefix)}</strong><br/><span>${escapeHtml(row.key_prefix)}</span></td>
-        <td>${escapeHtml(row.role || "-")}</td>
+        <td><span class="cell-primary">${escapeHtml(row.display_name || row.key_prefix)}</span><span class="cell-secondary">${escapeHtml(row.key_prefix)}</span></td>
+        <td><span class="badge badge-info">${escapeHtml(row.role || "-")}</span></td>
         <td>${escapeHtml(formatVirtualKeyLimits(row))}</td>
-        <td>$${Number(row.spend_usd || 0).toFixed(4)}</td>
+        <td>${renderAmount(row.spend_usd || 0, { precision: 4 })}</td>
         <td>${statusBadge(row.status || "pending")}</td>
         <td></td>
       `;
       const actions = document.createElement("div");
       actions.className = "table-actions";
-      actions.appendChild(createActionButton("Inspect", () => renderOutput("#virtual-keys-output", row), { accent: true }));
+      actions.appendChild(createActionButton("Inspect", () => {
+        showVirtualKeyRecord(row);
+        $("#virtual-keys-output")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }, { accent: true }));
       actions.appendChild(createActionButton("Edit", () => {
         populateVirtualKeyForm(row);
-        showToast(`Loaded ${row.key_prefix} into the form.`, "info");
+        showToast(`Loaded ${row.key_prefix} into the form below.`, "info");
+        $("#virtual-key-form")?.scrollIntoView({ behavior: "smooth", block: "center" });
       }));
       actions.appendChild(createActionButton("Rotate", async () => {
         const result = await apiFetch(`/admin/api/auth/virtual-keys/${encodeURIComponent(row.id)}/rotate`, { method: "POST" });
-        renderOutput("#virtual-keys-output", result);
-        renderOutput("#virtual-key-form-output", result);
-        showToast(`Rotated ${row.key_prefix}. Store the new token now.`, "warn");
+        showVirtualKeyRecord(result, { rawLabel: "View raw rotation response" });
+        renderRecordView("#virtual-key-form-output", result, VIRTUAL_KEY_RECORD_FIELDS, { rawLabel: "View raw rotation response" });
+        showToast(`Rotated ${row.key_prefix}. Store the new token now — it will not be shown again.`, "warn");
         await refreshVirtualKeys();
-      }));
+      }, { confirmMessage: `Rotate ${row.key_prefix}? The current token will stop working immediately and a new one will be issued.` }));
       actions.appendChild(createActionButton("Disable", async () => {
         const result = await apiFetch(`/admin/api/auth/virtual-keys/${encodeURIComponent(row.id)}/disable`, { method: "POST" });
-        renderOutput("#virtual-keys-output", result);
+        showVirtualKeyRecord(result, { rawLabel: "View raw response" });
         showToast(`Disabled ${row.key_prefix}.`, "warn");
         await refreshVirtualKeys();
-      }, { destructive: true, confirmMessage: `Disable virtual key ${row.key_prefix}? Existing callers will stop working.` }));
+      }, { destructive: true, confirmMessage: `Disable virtual key ${row.key_prefix}? Existing callers will stop working immediately.` }));
       tr.lastElementChild.appendChild(actions);
       return tr;
-    }, "Issued virtual keys will appear here."),
+    }, {
+      icon: "⚷",
+      title: "No virtual keys issued yet.",
+      body: "Virtual keys grant scoped, budget- and rate-limited API access. Issue one with the form to the right to get started.",
+      action: { label: "Issue your first key", onClick: () => $("#virtual-key-form input[name='display_name']")?.focus() },
+    }),
   );
-  renderOutput("#virtual-keys-output", payload);
+  if (!payload?.length) {
+    clearHost("#virtual-keys-output");
+    $("#virtual-keys-output")?.appendChild(buildEmptyState({
+      icon: "⚷",
+      title: "Nothing to inspect yet.",
+      body: "Issue a key, then choose “Inspect” on any row to see its full configuration here.",
+    }));
+  } else {
+    clearHost("#virtual-keys-output");
+    $("#virtual-keys-output")?.appendChild(buildEmptyState({
+      icon: "→",
+      title: "Select a key to inspect.",
+      body: `${payload.length} key${payload.length === 1 ? "" : "s"} on file. Choose “Inspect” on any row in the directory to view its full configuration, limits, and spend here.`,
+    }));
+  }
   return payload;
 }
+
+function renderPerTokenCost(value) {
+  if (value == null) return '<span class="empty-value">Not priced</span>';
+  const numeric = Number(value);
+  if (Number.isNaN(numeric)) return escapeHtml(String(value));
+  const per1k = renderAmount(numeric * 1000, { precision: 4 });
+  const per1m = renderAmount(numeric * 1_000_000, { precision: 2 });
+  return `${per1m} <span class="cell-secondary" style="display:inline; margin-left:6px;">/ 1M tokens · ${per1k} / 1K</span>`;
+}
+
+const PRICING_RECORD_FIELDS = [
+  { key: "provider", label: "Provider", render: (value) => `<span class="badge badge-info">${escapeHtml(value)}</span>` },
+  { key: "model", label: "Model", render: (value) => `<span class="cell-primary">${escapeHtml(value)}</span>` },
+  { key: "input_cost_per_token", label: "Input Cost", render: (value) => renderPerTokenCost(value) },
+  { key: "output_cost_per_token", label: "Output Cost", render: (value) => renderPerTokenCost(value) },
+];
 
 async function refreshPricingCatalog() {
   const payload = await apiFetch("/admin/api/pricing/catalog");
@@ -1036,20 +1247,46 @@ async function refreshPricingCatalog() {
   const host = $("#pricing-table");
   host.innerHTML = "";
   host.appendChild(
-    makeTable(["Provider", "Model", "Input / 1K", "Output / 1K"], rows, (row) => {
+    makeTable(["Provider", "Model", "Input / 1M", "Output / 1M", "Actions"], rows, (row) => {
       const tr = document.createElement("tr");
       tr.innerHTML = `
-        <td><strong>${escapeHtml(row.provider)}</strong></td>
-        <td>${escapeHtml(row.model)}</td>
-        <td>${escapeHtml(String(row.input_cost_per_token ?? "-"))}</td>
-        <td>${escapeHtml(String(row.output_cost_per_token ?? "-"))}</td>
+        <td><span class="badge badge-info">${escapeHtml(row.provider)}</span></td>
+        <td><span class="cell-primary">${escapeHtml(row.model)}</span></td>
+        <td>${row.input_cost_per_token == null ? '<span class="empty-value">-</span>' : renderAmount(Number(row.input_cost_per_token) * 1_000_000, { precision: 2 })}</td>
+        <td>${row.output_cost_per_token == null ? '<span class="empty-value">-</span>' : renderAmount(Number(row.output_cost_per_token) * 1_000_000, { precision: 2 })}</td>
+        <td></td>
       `;
+      const actions = document.createElement("div");
+      actions.className = "table-actions";
+      actions.appendChild(createActionButton("Inspect", () => {
+        renderRecordView("#pricing-output", row, PRICING_RECORD_FIELDS, { rawLabel: "View raw catalog entry" });
+      }, { accent: true }));
+      tr.lastElementChild.appendChild(actions);
       return tr;
-    }, "Pricing catalog rows will appear here."),
+    }, {
+      icon: "$",
+      title: "Pricing catalog is empty.",
+      body: "Per-token costs for connected providers and models will be listed here as they are registered.",
+    }),
   );
-  renderOutput("#pricing-output", payload);
+  clearHost("#pricing-output");
+  $("#pricing-output")?.appendChild(buildEmptyState({
+    icon: "→",
+    title: "Select a model to inspect its pricing.",
+    body: rows.length
+      ? `${rows.length} priced model${rows.length === 1 ? "" : "s"} in the catalog. Choose “Inspect” on any row to see its full per-token, per-1K, and per-1M cost breakdown.`
+      : "Pricing details will appear here once the catalog has entries.",
+  }));
   return payload;
 }
+
+const GUARDRAILS_RECORD_FIELDS = [
+  { key: "prompt_injection_blocking_enabled", label: "Prompt Injection Blocking", render: (value) => boolBadge(Boolean(value)) },
+  { key: "pii_output_masking_enabled", label: "PII Output Masking", render: (value) => boolBadge(Boolean(value)) },
+  { key: "pre_hooks", label: "Pre-Request Hooks", render: (value) => renderList(value, { emptyLabel: "No pre-request hooks configured" }) },
+  { key: "post_hooks", label: "Post-Response Hooks", render: (value) => renderList(value, { emptyLabel: "No post-response hooks configured" }) },
+  { key: "blocked_output_patterns", label: "Blocked Output Patterns", render: (value) => renderList(value, { emptyLabel: "No blocked patterns configured", limit: 6 }) },
+];
 
 async function refreshGuardrails() {
   const payload = await apiFetch("/admin/api/guardrails/settings");
@@ -1059,13 +1296,10 @@ async function refreshGuardrails() {
     { label: "Pre Hooks", value: String((payload.pre_hooks || []).length) },
     { label: "Post Hooks", value: String((payload.post_hooks || []).length) },
   ]);
-  renderKeyValueTable("#guardrails-table", [
-    { key: "Prompt Injection Blocking", value: payload.prompt_injection_blocking_enabled ? "Enabled" : "Disabled" },
-    { key: "PII Output Masking", value: payload.pii_output_masking_enabled ? "Enabled" : "Disabled" },
-    { key: "Pre Hooks", value: (payload.pre_hooks || []).join(", ") || "-" },
-    { key: "Post Hooks", value: (payload.post_hooks || []).join(", ") || "-" },
-    { key: "Blocked Output Patterns", value: String((payload.blocked_output_patterns || []).length) },
-  ], { emptyMessage: "No guardrail settings available." });
+  renderRecordView("#guardrails-table", payload, GUARDRAILS_RECORD_FIELDS, {
+    raw: false,
+    emptyState: { title: "No guardrail settings available.", body: "Guardrail configuration will appear here once it is available." },
+  });
   renderOutput("#guardrails-output", payload);
   return payload;
 }
