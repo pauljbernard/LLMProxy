@@ -13,7 +13,7 @@ class FakeBedrockClient:
     def invoke_model(self, **kwargs):
         assert kwargs["modelId"] == "anthropic.claude-3-5-sonnet"
         payload = json.loads(kwargs["body"].decode("utf-8"))
-        assert payload["messages"][0]["content"] == "Design a service boundary."
+        assert payload["messages"][0]["content"] in {"Design a service boundary.", "ping"}
         return {
             "body": io.BytesIO(
                 json.dumps(
@@ -69,6 +69,9 @@ class FakeBedrockClient:
                 },
             ]
         }
+
+    def healthcheck_invoke(self, **kwargs):
+        return self.invoke_model(**kwargs)
 
 
 def _request() -> ChatCompletionRequest:
@@ -126,3 +129,16 @@ def test_bedrock_provider_streams_chat_chunks() -> None:
 
 async def _collect(stream) -> list[dict[str, object]]:
     return [chunk async for chunk in stream]
+
+
+def test_bedrock_provider_healthcheck_uses_invoke_model() -> None:
+    provider = BedrockProvider(
+        "anthropic.claude-3-5-sonnet",
+        region="us-east-1",
+        access_key_id="test-access-key",
+        secret_access_key="test-secret-key",
+        client=FakeBedrockClient(),
+    )
+
+    result = asyncio.run(provider.healthcheck())
+    assert result["ok"] is True

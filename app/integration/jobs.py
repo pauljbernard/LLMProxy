@@ -158,6 +158,24 @@ def enqueue_performance_sampling_job(
     )
 
 
+def enqueue_replicate_prediction_job(
+    session: Session,
+    *,
+    model: str,
+    input_payload: dict[str, object],
+    wait_for_completion: bool = True,
+) -> JobQueueRecord:
+    return enqueue_job(
+        session,
+        job_type="replicate.prediction",
+        payload={
+            "model": model,
+            "input": input_payload,
+            "wait_for_completion": wait_for_completion,
+        },
+    )
+
+
 def claim_next_job(session: Session) -> JobQueueRecord | None:
     return claim_next_job_for_lane(session)
 

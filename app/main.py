@@ -1,6 +1,8 @@
 """Application entrypoint for llmProxy."""
 
-from fastapi import FastAPI
+import asyncio
+
+from fastapi import FastAPI, Response
 
 from app.config import get_settings
 from app.api.admin import router as admin_router
@@ -10,36 +12,48 @@ from app.api.evaluation import router as evaluation_router
 from app.api.models import router as models_router
 from app.api.openai_compatible import router as openai_router
 from app.api.proxy_native import router as proxy_router
+from app.api.prompts import router as prompts_router
 from app.api.training import router as training_router
 from app.db.session import get_session_factory
+from app.registry.model_registry import get_provider_registry
 from app.services.observability import build_operations_summary
 from app.services.provider_health import provider_health_snapshot
+from app.services.telemetry import configure_telemetry, prometheus_metrics_content_type, prometheus_metrics_payload
 
 
 def create_app() -> FastAPI:
     app = FastAPI(title="llmProxy", version="0.1.0")
     settings = get_settings()
+    configure_telemetry(settings)
 
     @app.get("/health")
     async def health() -> dict[str, object]:
+        provider_registry = {}
+        try:
+            session = get_session_factory()()
+            try:
+                provider_registry = get_provider_registry(settings, session=session)
+            finally:
+                session.close()
+        except Exception:
+            provider_registry = get_provider_registry(settings, session=None)
+        ping_results = await asyncio.gather(
+            *(provider.healthcheck() for provider in provider_registry.values()),
+            return_exceptions=True,
+        )
+        provider_ping: dict[str, object] = {}
+        for provider_key, result in zip(provider_registry.keys(), ping_results, strict=False):
+            if isinstance(result, Exception):
+                provider_ping[provider_key] = {"ok": False, "error": str(result)}
+            else:
+                provider_ping[provider_key] = result
         return {
             "status": "ok",
             "environment": settings.llmproxy_env,
             "database_backend": settings.database_backend,
             "redis_configured": bool(settings.llmproxy_redis_url),
-            "provider_families_configured": {
-                "openai": bool(settings.llmproxy_openai_api_key),
-                "anthropic": bool(settings.llmproxy_anthropic_api_key),
-                "google": bool(settings.llmproxy_google_api_key),
-                "xai": bool(settings.llmproxy_xai_api_key),
-                "azure_openai": bool(settings.llmproxy_azure_openai_api_key and settings.llmproxy_azure_openai_endpoint),
-                "bedrock": bool(
-                    settings.llmproxy_bedrock_region
-                    and settings.llmproxy_bedrock_access_key_id
-                    and settings.llmproxy_bedrock_secret_access_key
-                ),
-                "ollama": bool(settings.llmproxy_ollama_base_url),
-            },
+            "provider_families_configured": settings.provider_configuration,
+            "provider_ping": provider_ping,
             "logs_path": settings.llmproxy_logs_path,
         }
 
@@ -66,22 +80,18 @@ def create_app() -> FastAPI:
                 "latest_request_id": None,
                 "latest_evaluation_run_id": None,
                 "provider_health": provider_health_snapshot(),
-                "provider_configuration": {
-                    "openai": bool(settings.llmproxy_openai_api_key),
-                    "anthropic": bool(settings.llmproxy_anthropic_api_key),
-                    "google": bool(settings.llmproxy_google_api_key),
-                    "xai": bool(settings.llmproxy_xai_api_key),
-                    "azure_openai": bool(settings.llmproxy_azure_openai_api_key and settings.llmproxy_azure_openai_endpoint),
-                    "bedrock": bool(
-                        settings.llmproxy_bedrock_region
-                        and settings.llmproxy_bedrock_access_key_id
-                        and settings.llmproxy_bedrock_secret_access_key
-                    ),
-                    "ollama": bool(settings.llmproxy_ollama_base_url),
-                },
+                "provider_configuration": settings.provider_configuration,
             }
 
+    @app.get("/metrics/prometheus")
+    async def metrics_prometheus() -> Response:
+        return Response(
+            content=prometheus_metrics_payload(),
+            media_type=prometheus_metrics_content_type(),
+        )
+
     app.include_router(openai_router)
+    app.include_router(prompts_router)
     app.include_router(admin_router)
     app.include_router(proxy_router)
     app.include_router(datasets_router)

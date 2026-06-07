@@ -257,3 +257,253 @@ def test_router_prefers_higher_quality_local_entry_when_specificity_ties() -> No
 
     assert selected_route.provider_key == "local:coding-high"
     assert selected_route.decision.selected_model == "coding-high"
+
+
+def test_router_uses_configured_default_frontier_entries_without_hardcoded_branching() -> None:
+    request = ChatCompletionRequest.model_validate(
+        {
+            "model": "test-routing-model",
+            "messages": [{"role": "user", "content": "Investigate this architecture choice"}],
+            "metadata": {"session_id": "sess_default_frontier", "domain_hint": "software_architecture", "task_type_hint": "analysis"},
+        }
+    )
+    classification = classify_request(request)
+    settings = Settings(
+        llmproxy_xai_api_key="test-xai-key",
+        llmproxy_frontier_default_entries=[
+            {
+                "entry_type": "frontier",
+                "provider_key": "xai",
+                "provider_family": "xAI",
+                "model_id": "grok-3-mini",
+                "domains": ["software_architecture"],
+                "task_types": [],
+                "deployment_mode": "production",
+                "decision_rationale": "Configured xAI architecture route.",
+            }
+        ]
+    )
+
+    selected_route = select_route(
+        "req_default_frontier",
+        request,
+        classification,
+        settings,
+        session=FakeSession(
+            policy_record=RoutingPolicyVersion(
+                id="rpol_empty",
+                policy_version="rpol_empty",
+                policy_json={"entries": []},
+            )
+        ),
+    )
+
+    assert selected_route.provider_key == "xai"
+    assert selected_route.decision.selected_model == "grok-3-mini"
+    assert selected_route.decision.decision_rationale == "Configured xAI architecture route."
+
+
+def test_router_prefers_lower_cost_entry_when_strategy_is_cost() -> None:
+    request = ChatCompletionRequest.model_validate(
+        {
+            "model": "proxy-auto",
+            "messages": [{"role": "user", "content": "Answer a general question"}],
+            "metadata": {"session_id": "sess_cost", "domain_hint": "general", "task_type_hint": "question_answer"},
+        }
+    )
+    classification = classify_request(request)
+    policy_record = RoutingPolicyVersion(
+        id="rpol_frontier_cost",
+        policy_version="rpol_frontier_cost",
+        policy_json={
+            "entries": [
+                {
+                    "entry_type": "frontier",
+                    "provider_key": "openai",
+                    "provider_family": "OpenAI",
+                    "model_id": "gpt-5.5",
+                    "domains": ["general"],
+                    "deployment_mode": "production",
+                    "quality_summary": {"overall_score": 0.95},
+                    "price_per_token": 0.00002,
+                },
+                {
+                    "entry_type": "frontier",
+                    "provider_key": "deepseek",
+                    "provider_family": "DeepSeek",
+                    "model_id": "deepseek-v4-flash",
+                    "domains": ["general"],
+                    "deployment_mode": "production",
+                    "quality_summary": {"overall_score": 0.90},
+                    "price_per_token": 0.000002,
+                },
+            ]
+        },
+    )
+
+    selected_route = select_route(
+        "req_cost",
+        request,
+        classification,
+        Settings(llmproxy_routing_strategy="cost"),
+        session=FakeSession(policy_record=policy_record),
+    )
+
+    assert selected_route.provider_key == "deepseek"
+    assert selected_route.decision.selected_model == "deepseek-v4-flash"
+
+
+def test_router_prefers_lower_latency_entry_when_strategy_is_latency() -> None:
+    request = ChatCompletionRequest.model_validate(
+        {
+            "model": "proxy-auto",
+            "messages": [{"role": "user", "content": "Answer quickly"}],
+            "metadata": {"session_id": "sess_latency", "domain_hint": "general", "task_type_hint": "question_answer"},
+        }
+    )
+    classification = classify_request(request)
+    policy_record = RoutingPolicyVersion(
+        id="rpol_frontier_latency",
+        policy_version="rpol_frontier_latency",
+        policy_json={
+            "entries": [
+                {
+                    "entry_type": "frontier",
+                    "provider_key": "anthropic",
+                    "provider_family": "Anthropic",
+                    "model_id": "claude-3-5-sonnet",
+                    "domains": ["general"],
+                    "deployment_mode": "production",
+                    "quality_summary": {"overall_score": 0.95},
+                    "latency_ms": 240,
+                },
+                {
+                    "entry_type": "frontier",
+                    "provider_key": "groq",
+                    "provider_family": "Groq",
+                    "model_id": "llama-3.3-70b-versatile",
+                    "domains": ["general"],
+                    "deployment_mode": "production",
+                    "quality_summary": {"overall_score": 0.90},
+                    "latency_ms": 40,
+                },
+            ]
+        },
+    )
+
+    selected_route = select_route(
+        "req_latency",
+        request,
+        classification,
+        Settings(llmproxy_routing_strategy="latency"),
+        session=FakeSession(policy_record=policy_record),
+    )
+
+    assert selected_route.provider_key == "groq"
+    assert selected_route.decision.selected_model == "llama-3.3-70b-versatile"
+
+
+def test_router_prefers_tag_matched_entry() -> None:
+    request = ChatCompletionRequest.model_validate(
+        {
+            "model": "proxy-auto",
+            "messages": [{"role": "user", "content": "Use the finance-optimized route"}],
+            "metadata": {
+                "session_id": "sess_tags",
+                "domain_hint": "general",
+                "task_type_hint": "question_answer",
+                "route_tags": ["finance", "priority"],
+            },
+        }
+    )
+    classification = classify_request(request)
+    policy_record = RoutingPolicyVersion(
+        id="rpol_tags",
+        policy_version="rpol_tags",
+        policy_json={
+            "entries": [
+                {
+                    "entry_type": "frontier",
+                    "provider_key": "openai",
+                    "provider_family": "OpenAI",
+                    "model_id": "gpt-5.5",
+                    "domains": ["general"],
+                    "deployment_mode": "production",
+                    "quality_summary": {"overall_score": 0.95},
+                },
+                {
+                    "entry_type": "frontier",
+                    "provider_key": "groq",
+                    "provider_family": "Groq",
+                    "model_id": "llama-3.3-70b-versatile",
+                    "domains": ["general"],
+                    "tags": ["finance", "priority"],
+                    "deployment_mode": "production",
+                    "quality_summary": {"overall_score": 0.90},
+                },
+            ]
+        },
+    )
+
+    selected_route = select_route(
+        "req_tags",
+        request,
+        classification,
+        Settings(),
+        session=FakeSession(policy_record=policy_record),
+    )
+
+    assert selected_route.provider_key == "groq"
+
+
+def test_router_prefers_region_matched_entry() -> None:
+    request = ChatCompletionRequest.model_validate(
+        {
+            "model": "proxy-auto",
+            "messages": [{"role": "user", "content": "Use the EU route"}],
+            "metadata": {
+                "session_id": "sess_region",
+                "domain_hint": "general",
+                "task_type_hint": "question_answer",
+                "region_hint": "eu-west",
+            },
+        }
+    )
+    classification = classify_request(request)
+    policy_record = RoutingPolicyVersion(
+        id="rpol_regions",
+        policy_version="rpol_regions",
+        policy_json={
+            "entries": [
+                {
+                    "entry_type": "frontier",
+                    "provider_key": "openai",
+                    "provider_family": "OpenAI",
+                    "model_id": "gpt-5.5",
+                    "domains": ["general"],
+                    "deployment_mode": "production",
+                    "quality_summary": {"overall_score": 0.95},
+                },
+                {
+                    "entry_type": "frontier",
+                    "provider_key": "mistral",
+                    "provider_family": "Mistral",
+                    "model_id": "mistral-large-latest",
+                    "domains": ["general"],
+                    "regions": ["eu-west"],
+                    "deployment_mode": "production",
+                    "quality_summary": {"overall_score": 0.90},
+                },
+            ]
+        },
+    )
+
+    selected_route = select_route(
+        "req_region",
+        request,
+        classification,
+        Settings(),
+        session=FakeSession(policy_record=policy_record),
+    )
+
+    assert selected_route.provider_key == "mistral"

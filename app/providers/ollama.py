@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncIterator, Sequence
 import json
+from time import time
 
 from app.config import Settings
 from app.providers.base import BaseProvider
@@ -135,3 +136,24 @@ class OllamaProvider(BaseProvider):
         if values:
             return [[float(value) for value in values]]
         return [[] for _ in texts]
+
+    async def healthcheck(self) -> dict[str, object]:
+        started_at = time()
+        try:
+            async with self._client(base_url=self.base_url, timeout_seconds=3.0) as client:
+                response = await client.get("/api/tags")
+            return {
+                "ok": response.status_code < 500,
+                "provider": self.provider_name,
+                "model": self.model_id,
+                "status_code": response.status_code,
+                "latency_ms": int((time() - started_at) * 1000),
+            }
+        except Exception as exc:
+            return {
+                "ok": False,
+                "provider": self.provider_name,
+                "model": self.model_id,
+                "error": str(exc),
+                "latency_ms": int((time() - started_at) * 1000),
+            }

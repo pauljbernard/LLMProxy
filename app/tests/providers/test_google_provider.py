@@ -143,3 +143,22 @@ def test_google_provider_maps_supported_generation_parameters() -> None:
 
 async def _collect(stream) -> list[dict[str, object]]:
     return [chunk async for chunk in stream]
+
+
+def test_google_provider_healthcheck_uses_generate_content() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1beta/models/gemini-2.5-pro:generateContent"
+        payload = json.loads(request.content.decode("utf-8"))
+        assert payload["generationConfig"]["maxOutputTokens"] == 1
+        assert payload["contents"][0]["parts"][0]["text"] == "ping"
+        return httpx.Response(200, json={"modelVersion": "gemini-2.5-pro"})
+
+    provider = GoogleProvider(
+        "gemini-2.5-pro",
+        api_key="test-google-key",
+        base_url="https://generativelanguage.googleapis.com/v1beta",
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = asyncio.run(provider.healthcheck())
+    assert result["ok"] is True

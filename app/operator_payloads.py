@@ -30,14 +30,34 @@ def settings_payload(settings: Settings) -> dict[str, Any]:
         "llmproxy_api_port": settings.llmproxy_api_port,
         "llmproxy_database_url": settings.llmproxy_database_url,
         "llmproxy_redis_url": settings.llmproxy_redis_url,
+        "llmproxy_prometheus_metrics_enabled": settings.llmproxy_prometheus_metrics_enabled,
+        "llmproxy_otel_enabled": settings.llmproxy_otel_enabled,
+        "llmproxy_otel_service_name": settings.llmproxy_otel_service_name,
+        "llmproxy_otel_exporter_otlp_endpoint": settings.llmproxy_otel_exporter_otlp_endpoint,
+        "llmproxy_jaeger_ui_url": settings.llmproxy_jaeger_ui_url,
         "llmproxy_default_route_model": settings.llmproxy_default_route_model,
+        "llmproxy_routing_strategy": settings.llmproxy_routing_strategy,
+        "llmproxy_frontier_default_entries": settings.llmproxy_frontier_default_entries,
         "llmproxy_openai_model": settings.llmproxy_openai_model,
+        "llmproxy_groq_model": settings.llmproxy_groq_model,
+        "llmproxy_mistral_model": settings.llmproxy_mistral_model,
+        "llmproxy_deepseek_model": settings.llmproxy_deepseek_model,
+        "llmproxy_cohere_model": settings.llmproxy_cohere_model,
+        "llmproxy_together_model": settings.llmproxy_together_model,
+        "llmproxy_fireworks_model": settings.llmproxy_fireworks_model,
+        "llmproxy_perplexity_model": settings.llmproxy_perplexity_model,
+        "llmproxy_cloudflare_workers_ai_model": settings.llmproxy_cloudflare_workers_ai_model,
+        "llmproxy_huggingface_tgi_model": settings.llmproxy_huggingface_tgi_model,
+        "llmproxy_replicate_base_url": settings.llmproxy_replicate_base_url,
+        "llmproxy_vertex_ai_model": settings.llmproxy_vertex_ai_model,
         "llmproxy_anthropic_model": settings.llmproxy_anthropic_model,
         "llmproxy_google_model": settings.llmproxy_google_model,
         "llmproxy_xai_model": settings.llmproxy_xai_model,
         "llmproxy_bedrock_model": settings.llmproxy_bedrock_model,
         "llmproxy_azure_openai_model": settings.llmproxy_azure_openai_model,
         "llmproxy_ollama_model": settings.llmproxy_ollama_model,
+        "llmproxy_mcp_max_tool_roundtrips": getattr(settings, "llmproxy_mcp_max_tool_roundtrips", None),
+        "llmproxy_mcp_servers": getattr(settings, "llmproxy_mcp_servers", {}),
         "llmproxy_exports_path": settings.llmproxy_exports_path,
         "llmproxy_datasets_path": settings.llmproxy_datasets_path,
         "llmproxy_models_path": settings.llmproxy_models_path,
@@ -46,19 +66,7 @@ def settings_payload(settings: Settings) -> dict[str, Any]:
         "llmproxy_logs_path": settings.llmproxy_logs_path,
         "llmproxy_auto_deploy_approved_evaluations": settings.llmproxy_auto_deploy_approved_evaluations,
         "llmproxy_auto_deploy_deployment_mode": settings.llmproxy_auto_deploy_deployment_mode,
-        "provider_configuration": {
-            "openai": bool(settings.llmproxy_openai_api_key),
-            "anthropic": bool(settings.llmproxy_anthropic_api_key),
-            "google": bool(settings.llmproxy_google_api_key),
-            "xai": bool(settings.llmproxy_xai_api_key),
-            "azure_openai": bool(settings.llmproxy_azure_openai_api_key and settings.llmproxy_azure_openai_endpoint),
-            "bedrock": bool(
-                settings.llmproxy_bedrock_region
-                and settings.llmproxy_bedrock_access_key_id
-                and settings.llmproxy_bedrock_secret_access_key
-            ),
-            "ollama": bool(settings.llmproxy_ollama_base_url),
-        },
+        "provider_configuration": settings.provider_configuration,
     }
 
 
@@ -160,10 +168,17 @@ def request_detail_payload(
     candidates: list[TrainingCandidate],
     performance_samples: list[ModelPerformanceSample],
 ) -> dict[str, Any]:
+    mcp_trace: list[dict[str, Any]] = []
+    for item in model_responses:
+        if isinstance(item.response_json, dict):
+            trace = item.response_json.get("mcp_trace")
+            if isinstance(trace, list):
+                mcp_trace.extend(trace)
     return {
         "request": {**request_summary_payload(request), "request_json": request.request_json},
         "routing_decisions": [routing_decision_payload(item) for item in routing_decisions],
         "model_responses": [model_response_payload(item) for item in model_responses],
+        "mcp_trace": mcp_trace,
         "judge_critiques": [judge_critique_payload(item) for item in judge_critiques],
         "training_candidates": [training_candidate_payload(item) for item in candidates],
         "performance_samples": [performance_sample_payload(item) for item in performance_samples],

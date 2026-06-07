@@ -313,6 +313,77 @@ function parseMessages(text) {
     });
 }
 
+function validateRoutingDefaultEntries(entries) {
+  if (!Array.isArray(entries)) {
+    throw new Error("Routing default entries must be a JSON array.");
+  }
+  return entries.map((entry, index) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new Error(`Entry ${index + 1} must be a JSON object.`);
+    }
+    const providerKey = String(entry.provider_key || "").trim();
+    const modelId = String(entry.model_id || "").trim();
+    const deploymentMode = String(entry.deployment_mode || "production").trim();
+    if (!providerKey) {
+      throw new Error(`Entry ${index + 1} is missing provider_key.`);
+    }
+    if (!modelId) {
+      throw new Error(`Entry ${index + 1} is missing model_id.`);
+    }
+    if (!["production", "canary", "shadow"].includes(deploymentMode)) {
+      throw new Error(`Entry ${index + 1} has invalid deployment_mode '${deploymentMode}'.`);
+    }
+    const normalizeStringArray = (value, fieldName) => {
+      if (value == null) return [];
+      if (!Array.isArray(value)) {
+        throw new Error(`Entry ${index + 1} field '${fieldName}' must be an array of strings.`);
+      }
+      return value.map((item) => String(item).trim()).filter(Boolean);
+    };
+    return {
+      ...entry,
+      provider_key: providerKey,
+      model_id: modelId,
+      deployment_mode: deploymentMode,
+      domains: normalizeStringArray(entry.domains, "domains"),
+      task_types: normalizeStringArray(entry.task_types, "task_types"),
+      tags: normalizeStringArray(entry.tags, "tags"),
+      labels: normalizeStringArray(entry.labels, "labels"),
+      regions: normalizeStringArray(entry.regions, "regions"),
+      decision_rationale: entry.decision_rationale == null ? null : String(entry.decision_rationale),
+    };
+  });
+}
+
+function parseMcpTools(text) {
+  return String(text || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const parts = line.split(":");
+      if (parts.length < 3 || parts[0] !== "mcp") {
+        throw new Error("MCP tools must use mcp:server:tool_name format.");
+      }
+      return { type: "mcp", server: parts[1].trim(), name: parts.slice(2).join(":").trim() };
+    });
+}
+
+function parseJsonObject(value, fieldName) {
+  const text = String(value || "").trim();
+  if (!text) return {};
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error(`${fieldName} must be valid JSON.`);
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`${fieldName} must be a JSON object.`);
+  }
+  return parsed;
+}
+
 function makeTable(columns, rows, rowRenderer, emptyMessage = "No records available yet.") {
   const table = document.createElement("table");
   const thead = document.createElement("thead");
@@ -391,13 +462,13 @@ function enhanceFormLabels() {
 
 const panelLoaders = {
   overview: async () => {
-    await Promise.all([refreshHealth(), refreshConfig()]);
+    await Promise.all([refreshHealth(), refreshConfig(), refreshMcpServers(), refreshProviderGuides()]);
   },
   proxy: async () => {
     await Promise.all([refreshRequests(), refreshStreamingSupport()]);
   },
   models: async () => {
-    await Promise.all([refreshModels(), refreshLocalModels(), refreshPolicies()]);
+    await Promise.all([refreshModels(), refreshLocalModels(), refreshPolicies(), refreshPrompts()]);
   },
   data: async () => {
     await refreshDatasetPipeline();
@@ -406,7 +477,7 @@ const panelLoaders = {
     await Promise.all([refreshTrainingRuns(), refreshEvaluations(), refreshKpis()]);
   },
   operations: async () => {
-    await Promise.all([refreshOperationsSummary(), refreshOperationsLive(), refreshJobs(), refreshEvents()]);
+    await Promise.all([refreshOperationsSummary(), refreshOperationsLive(), refreshJobs(), refreshEvents(), refreshObservability()]);
   },
 };
 
@@ -455,12 +526,175 @@ async function refreshConfig() {
     autoDeployCheckbox.checked = Boolean(payload.llmproxy_auto_deploy_approved_evaluations);
   }
   setFieldValue("#automation-form", "auto_deploy_deployment_mode", payload.llmproxy_auto_deploy_deployment_mode || "production");
+  setFieldValue("#routing-settings-form", "routing_strategy", payload.llmproxy_routing_strategy || "balanced");
+  setFieldValue("#routing-settings-form", "frontier_default_entries", JSON.stringify(payload.llmproxy_frontier_default_entries || [], null, 2));
+  return payload;
+}
+
+async function refreshProviderGuides() {
+  const payload = await apiFetch("/admin/api/providers/guides");
+  renderMetricGrid("#provider-guide-grid", [
+    { label: "Named Guides", value: String(payload.provider_count || 0) },
+    {
+      label: "Configured Targets",
+      value: String((payload.providers || []).filter((item) => item.configured).length),
+    },
+    {
+      label: "Config Gaps",
+      value: String((payload.providers || []).filter((item) => !item.configured).length),
+    },
+  ]);
+  const host = $("#provider-guide-table");
+  host.innerHTML = "";
+  host.appendChild(
+    makeTable(["Provider", "Configured", "Validation", "Config Keys", "Actions"], payload.providers || [], (row) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td><strong>${escapeHtml(row.label)}</strong><br/><span>${escapeHtml(row.provider_key)}</span></td>
+        <td>${boolBadge(Boolean(row.configured))}</td>
+        <td>${escapeHtml(row.validation_mode || "-")}</td>
+        <td>${escapeHtml((row.config_keys || []).join(", "))}</td>
+        <td></td>
+      `;
+      const actions = document.createElement("div");
+      actions.className = "table-actions";
+      actions.appendChild(createActionButton("Inspect", () => renderOutput("#provider-guide-output", row), { accent: true }));
+      if (row.provider_key !== "replicate") {
+        actions.appendChild(createActionButton("Validate", async () => {
+          const result = await apiFetch("/admin/api/providers/validate", {
+            method: "POST",
+            body: JSON.stringify({ provider_key: row.provider_key, prompt: "Say hello briefly." }),
+          });
+          renderOutput("#provider-guide-output", result);
+          showToast(`Validated ${row.label}.`, "ok");
+        }));
+      }
+      tr.lastElementChild.appendChild(actions);
+      return tr;
+    }, "Provider-specific guidance will appear here."),
+  );
+  renderOutput("#provider-guide-output", payload);
+  return payload;
+}
+
+async function refreshPrompts() {
+  const payload = await apiFetch("/admin/api/prompts");
+  const host = $("#prompts-table");
+  host.innerHTML = "";
+  host.appendChild(
+    makeTable(["Name", "Version", "Variables", "Model", "Actions"], payload || [], (row) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td><strong>${escapeHtml(row.name)}</strong><br/><span>${escapeHtml(row.description || "")}</span></td>
+        <td>${escapeHtml(String(row.version))}</td>
+        <td>${escapeHtml((row.variables || []).join(", ") || "-")}</td>
+        <td>${escapeHtml(row.model_override || "-")}</td>
+        <td></td>
+      `;
+      const actions = document.createElement("div");
+      actions.className = "table-actions";
+      actions.appendChild(createActionButton("Inspect", async () => {
+        const detail = await apiFetch(`/admin/api/prompts/${encodeURIComponent(row.name)}?version=${encodeURIComponent(row.version)}`);
+        renderOutput("#prompt-detail-output", detail);
+      }, { accent: true }));
+      actions.appendChild(createActionButton("Render", async () => {
+        const variables = Object.fromEntries((row.variables || []).map((name) => [name, `sample_${name}`]));
+        const detail = await apiFetch(`/admin/api/prompts/${encodeURIComponent(row.name)}/render`, {
+          method: "POST",
+          body: JSON.stringify({ version: row.version, variables }),
+        });
+        renderOutput("#prompt-detail-output", detail);
+      }));
+      if (Number(row.version || 0) > 1) {
+        actions.appendChild(createActionButton("Diff Prev", async () => {
+          const detail = await apiFetch(
+            `/admin/api/prompts/${encodeURIComponent(row.name)}/diff?from_version=${encodeURIComponent(Number(row.version) - 1)}&to_version=${encodeURIComponent(row.version)}`,
+          );
+          renderOutput("#prompt-detail-output", detail);
+        }));
+      }
+      tr.children[4].appendChild(actions);
+      return tr;
+    }, "No prompt templates registered yet."),
+  );
+  return payload;
+}
+
+async function refreshObservability() {
+  const payload = await apiFetch("/admin/api/observability");
+  renderMetricGrid("#observability-grid", [
+    { label: "Prometheus", badge: boolBadge(Boolean(payload.prometheus?.enabled)), subvalue: payload.prometheus?.path || "-" },
+    { label: "OTEL Export", badge: boolBadge(Boolean(payload.otel?.enabled)), subvalue: payload.otel?.service_name || "-" },
+    { label: "Jaeger UI", value: payload.otel?.jaeger_ui_url || "-", subvalue: "Trace search endpoint" },
+  ]);
+  const host = $("#observability-table");
+  host.innerHTML = "";
+  host.appendChild(
+    makeTable(["Surface", "Value"], [
+      { key: "Prometheus Path", value: payload.prometheus?.path || "-" },
+      { key: "OTLP Endpoint", value: payload.otel?.exporter_otlp_endpoint || "-" },
+      { key: "Jaeger UI", value: payload.otel?.jaeger_ui_url || "-" },
+      { key: "Scrape Job", value: payload.prometheus?.scrape_config?.job_name || "llmproxy" },
+    ], (row) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td><strong>${escapeHtml(row.key)}</strong></td><td>${escapeHtml(String(row.value ?? "-"))}</td>`;
+      return tr;
+    }, "No observability configuration available."),
+  );
+  renderOutput("#observability-output", payload);
+  return payload;
+}
+
+async function refreshMcpServers() {
+  const payload = await apiFetch("/admin/api/mcp/servers");
+  renderMetricGrid("#mcp-server-grid", [
+    { label: "Configured Servers", value: String(payload.server_count || 0) },
+    { label: "Exposed Tools", value: String(payload.tool_count || 0) },
+    {
+      label: "Healthy Servers",
+      value: String((payload.servers || []).filter((item) => item.configured && !item.error).length),
+    },
+    {
+      label: "Servers With Errors",
+      value: String((payload.servers || []).filter((item) => item.error).length),
+    },
+  ]);
+  const host = $("#mcp-server-table");
+  host.innerHTML = "";
+  host.appendChild(
+    makeTable(["Server", "Transport", "Configured", "Tools", "Status", "Actions"], payload.servers || [], (row) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td><strong>${escapeHtml(row.server)}</strong></td>
+        <td>${escapeHtml(row.transport || "-")}</td>
+        <td>${boolBadge(Boolean(row.configured))}</td>
+        <td>${escapeHtml(String(row.tool_count ?? 0))}</td>
+        <td>${row.error ? statusBadge("failed") : statusBadge(row.configured ? "connected" : "pending")}</td>
+        <td></td>
+      `;
+      const actions = document.createElement("div");
+      actions.className = "table-actions";
+      actions.appendChild(createActionButton("Inspect", () => renderOutput("#mcp-server-output", row), { accent: true }));
+      actions.appendChild(createActionButton("Validate", async () => {
+        const result = await apiFetch(`/admin/api/mcp/servers/${encodeURIComponent(row.server)}/validate`, {
+          method: "POST",
+        });
+        renderOutput("#mcp-server-output", result);
+        showToast(`Validated MCP server ${row.server}.`, "ok");
+        await refreshMcpServers();
+      }));
+      tr.lastElementChild.appendChild(actions);
+      return tr;
+    }, "Configured MCP servers will appear here."),
+  );
+  renderOutput("#mcp-server-output", payload);
   return payload;
 }
 
 async function validateConfig() {
   const payload = await apiFetch("/admin/api/config/validate");
   logConsole("config validate", payload);
+  renderOutput("#provider-guide-output", payload.provider_guides || []);
 }
 
 async function refreshRequests(filters = {}) {
@@ -484,6 +718,7 @@ async function refreshRequests(filters = {}) {
       actions.appendChild(
         createActionButton("Inspect", async () => {
           const detail = await apiFetch(`/admin/api/proxy/requests/${row.id}`);
+          renderMcpTraceTable("#request-mcp-trace-table", detail.mcp_trace || []);
           showDetailCard("#request-detail-card", "#request-detail-output", detail);
         }, { accent: true }),
       );
@@ -569,6 +804,8 @@ async function refreshPolicies() {
         policy_version: policyVersion.policy_version,
         entry_type: "-",
         domains: "-",
+        tags: "-",
+        regions: "-",
         mode: "-",
         provider: "-",
         model: "-",
@@ -581,6 +818,8 @@ async function refreshPolicies() {
       policy_version: policyVersion.policy_version,
       entry_type: entry.entry_type || (String(entry.provider_key || "").startsWith("local:") ? "local" : "frontier"),
       domains: (entry.domains || []).join(", ") || "-",
+      tags: (entry.tags || entry.labels || []).join(", ") || "-",
+      regions: (entry.regions || []).join(", ") || "-",
       mode: entry.deployment_mode || "-",
       provider: entry.provider_key || "-",
       model: entry.model_alias || entry.model_id || "-",
@@ -591,12 +830,14 @@ async function refreshPolicies() {
   const host = $("#policies-table");
   host.innerHTML = "";
   host.appendChild(
-    makeTable(["Version", "Type", "Domains", "Mode", "Provider", "Model", "Actions"], rows, (row) => {
+    makeTable(["Version", "Type", "Domains", "Tags", "Regions", "Mode", "Provider", "Model", "Actions"], rows, (row) => {
       const tr = document.createElement("tr");
       tr.innerHTML = `
         <td><strong>${escapeHtml(row.policy_version)}</strong></td>
         <td>${statusBadge(row.entry_type)}</td>
         <td>${escapeHtml(row.domains)}</td>
+        <td>${escapeHtml(row.tags)}</td>
+        <td>${escapeHtml(row.regions)}</td>
         <td>${escapeHtml(row.mode)}</td>
         <td>${escapeHtml(row.provider)}</td>
         <td>${escapeHtml(row.model)}</td>
@@ -613,6 +854,8 @@ async function refreshPolicies() {
           setFieldValue("#frontier-policy-form", "model_id", entry.model_id || "");
           setFieldValue("#frontier-policy-form", "domains", (entry.domains || []).join(","));
           setFieldValue("#frontier-policy-form", "task_types", (entry.task_types || []).join(","));
+          setFieldValue("#frontier-policy-form", "tags", (entry.tags || entry.labels || []).join(","));
+          setFieldValue("#frontier-policy-form", "regions", (entry.regions || []).join(","));
           setFieldValue("#frontier-policy-form", "deployment_mode", entry.deployment_mode || "production");
           setFieldValue("#frontier-policy-form", "canary_percent", String(entry.canary_percent ?? 0));
           setFieldValue("#frontier-policy-form", "endpoint_url", entry.endpoint_url || "");
@@ -912,6 +1155,25 @@ function renderLogTable(selector, rows) {
   );
 }
 
+function renderMcpTraceTable(selector, rows) {
+  const host = $(selector);
+  if (!host) return;
+  host.innerHTML = "";
+  host.appendChild(
+    makeTable(["Server", "Tool", "Call", "Arguments", "Result"], rows || [], (row) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td><strong>${escapeHtml(row.server || "-")}</strong></td>
+        <td>${escapeHtml(row.tool_name || "-")}</td>
+        <td>${escapeHtml(row.tool_call_id || "-")}</td>
+        <td><code>${escapeHtml(JSON.stringify(row.arguments || {}))}</code></td>
+        <td><code>${escapeHtml(JSON.stringify(row.result || {}))}</code></td>
+      `;
+      return tr;
+    }, "No MCP tool activity recorded for this request."),
+  );
+}
+
 async function refreshOperationsSummary() {
   const summary = await apiFetch("/admin/api/ops/summary");
   const metrics = await apiFetch("/metrics");
@@ -937,6 +1199,20 @@ async function refreshOperationsSummary() {
       value: String(Object.values(summary.provider_health || {}).filter((item) => item && item.cooled_down).length),
     },
   ]);
+  const mcpRuntime = Object.values(summary.mcp_runtime || {});
+  renderMetricGrid("#ops-mcp-grid", [
+    { label: "MCP Servers Seen", value: String(mcpRuntime.length) },
+    { label: "Validated", value: String(mcpRuntime.reduce((sum, item) => sum + Number(item.validation_count || 0), 0)) },
+    { label: "Tool Calls", value: String(mcpRuntime.reduce((sum, item) => sum + Number(item.tool_call_count || 0), 0)) },
+    { label: "Failures", value: String(mcpRuntime.reduce((sum, item) => sum + Number(item.failed_tool_calls || 0) + Number(item.failed_validations || 0), 0)) },
+  ]);
+  renderLogTable("#ops-mcp-table", mcpRuntime.map((item) => ({
+    timestamp: item.last_tool_at || item.last_validation_at,
+    level: item.last_error ? "ERROR" : "INFO",
+    component: `mcp.${item.server}`,
+    message: item.last_tool_name ? `Last tool: ${item.last_tool_name}` : "Validation activity",
+    data: item,
+  })));
   renderLogTable("#ops-stream-live-table", (summary.streaming && summary.streaming.recent_stream_summaries) || []);
   return { summary, metrics };
 }
@@ -976,6 +1252,20 @@ async function refreshOperationsLive() {
       value: String(Object.values(payload.summary?.provider_health || {}).filter((item) => item && item.cooled_down).length),
     },
   ]);
+  const mcpRuntime = Object.values(payload.summary?.mcp_runtime || {});
+  renderMetricGrid("#ops-mcp-grid", [
+    { label: "MCP Servers Seen", value: String(mcpRuntime.length) },
+    { label: "Validated", value: String(mcpRuntime.reduce((sum, item) => sum + Number(item.validation_count || 0), 0)) },
+    { label: "Tool Calls", value: String(mcpRuntime.reduce((sum, item) => sum + Number(item.tool_call_count || 0), 0)) },
+    { label: "Failures", value: String(mcpRuntime.reduce((sum, item) => sum + Number(item.failed_tool_calls || 0) + Number(item.failed_validations || 0), 0)) },
+  ]);
+  renderLogTable("#ops-mcp-table", mcpRuntime.map((item) => ({
+    timestamp: item.last_tool_at || item.last_validation_at,
+    level: item.last_error ? "ERROR" : "INFO",
+    component: `mcp.${item.server}`,
+    message: item.last_tool_name ? `Last tool: ${item.last_tool_name}` : "Validation activity",
+    data: item,
+  })));
   renderLogTable("#ops-stream-live-table", (payload.summary?.streaming && payload.summary.streaming.recent_stream_summaries) || []);
   renderLogTable("#ops-logs-table", payload.logs);
   renderLogTable("#ops-errors-table", payload.errors);
@@ -1175,6 +1465,9 @@ async function initialize() {
     const submitter = event.submitter;
     const data = new FormData(event.currentTarget);
     const wantsStream = data.get("stream") === "on";
+    const promptTemplateName = String(data.get("prompt_template_name") || "").trim();
+    const promptTemplateVersion = String(data.get("prompt_template_version") || "").trim();
+    const promptTemplateVariables = parseJsonObject(data.get("prompt_template_variables"), "Prompt template variables");
     const body = {
       model: data.get("model"),
       stream: wantsStream,
@@ -1184,9 +1477,22 @@ async function initialize() {
         session_id: data.get("session_id"),
         domain_hint: data.get("domain_hint") || null,
         task_type_hint: data.get("task_type_hint") || null,
+        route_tags: csv(String(data.get("route_tags") || "")),
+        region_hint: String(data.get("region_hint") || "").trim() || null,
       },
       messages: parseMessages(String(data.get("messages") || "")),
     };
+    if (promptTemplateName) {
+      body.metadata.prompt_template_name = promptTemplateName;
+      body.metadata.prompt_template_variables = promptTemplateVariables;
+      if (promptTemplateVersion) {
+        body.metadata.prompt_template_version = Number(promptTemplateVersion);
+      }
+    }
+    const mcpTools = parseMcpTools(String(data.get("mcp_tools") || ""));
+    if (mcpTools.length && submitter.dataset.mode === "chat") {
+      body.tools = mcpTools;
+    }
     const url = submitter.dataset.mode === "ensemble" ? "/proxy/ensemble" : "/v1/chat/completions";
     try {
       const result = await withLoading(submitter, async () => (
@@ -1242,6 +1548,22 @@ async function initialize() {
       logConsole("streaming support refresh failed", String(error));
     }
   });
+  $("#refresh-provider-guides")?.addEventListener("click", async (event) => {
+    try {
+      await withLoading(event.currentTarget, () => refreshProviderGuides());
+    } catch (error) {
+      showToast(`Provider guide refresh failed: ${String(error)}`, "err");
+      logConsole("provider guides refresh failed", String(error));
+    }
+  });
+  $("#refresh-mcp-servers").addEventListener("click", async (event) => {
+    try {
+      await withLoading(event.currentTarget, () => refreshMcpServers());
+    } catch (error) {
+      showToast(`MCP server refresh failed: ${String(error)}`, "err");
+      logConsole("mcp server refresh failed", String(error));
+    }
+  });
   $("#streaming-validate-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
@@ -1265,6 +1587,14 @@ async function initialize() {
   $("#refresh-models").addEventListener("click", async (event) => { try { await withLoading(event.currentTarget, () => refreshModels()); } catch (error) { showToast(`Models refresh failed: ${String(error)}`, "err"); logConsole("models refresh failed", String(error)); } });
   $("#refresh-local-models").addEventListener("click", async (event) => { try { await withLoading(event.currentTarget, () => refreshLocalModels()); } catch (error) { showToast(`Local model refresh failed: ${String(error)}`, "err"); logConsole("local models refresh failed", String(error)); } });
   $("#refresh-policies").addEventListener("click", async (event) => { try { await withLoading(event.currentTarget, () => refreshPolicies()); } catch (error) { showToast(`Policy refresh failed: ${String(error)}`, "err"); logConsole("policy refresh failed", String(error)); } });
+  $("#refresh-prompts")?.addEventListener("click", async (event) => {
+    try {
+      await withLoading(event.currentTarget, () => refreshPrompts());
+    } catch (error) {
+      showToast(`Prompt refresh failed: ${String(error)}`, "err");
+      logConsole("prompt refresh failed", String(error));
+    }
+  });
 
   $("#model-register-form").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -1309,6 +1639,9 @@ async function initialize() {
       model_id: data.get("model_id"),
       domains: csv(String(data.get("domains") || "")),
       task_types: csv(String(data.get("task_types") || "")),
+      tags: csv(String(data.get("tags") || "")),
+      labels: csv(String(data.get("tags") || "")),
+      regions: csv(String(data.get("regions") || "")),
       deployment_mode: data.get("deployment_mode"),
       canary_percent: Number(data.get("canary_percent") || 0),
       endpoint_url: String(data.get("endpoint_url") || "").trim() || null,
@@ -1323,6 +1656,36 @@ async function initialize() {
     } catch (error) {
       showToast(`Frontier policy update failed: ${String(error)}`, "err");
       logConsole("frontier policy update failed", String(error));
+    }
+  });
+
+  $("#routing-settings-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submitter = event.submitter;
+    const data = new FormData(event.currentTarget);
+    let frontierDefaultEntries = [];
+    try {
+      frontierDefaultEntries = validateRoutingDefaultEntries(
+        JSON.parse(String(data.get("frontier_default_entries") || "[]")),
+      );
+    } catch (error) {
+      showToast(`Routing defaults invalid: ${String(error)}`, "err");
+      renderOutput("#routing-settings-output", { saved: false, error: String(error) });
+      return;
+    }
+    const body = {
+      routing_strategy: String(data.get("routing_strategy") || "balanced"),
+      frontier_default_entries: frontierDefaultEntries,
+      env_file: String(data.get("env_file") || ".env.local"),
+    };
+    try {
+      const result = await withLoading(submitter, () => apiFetch("/admin/api/routing/settings", { method: "POST", body: JSON.stringify(body) }));
+      renderOutput("#routing-settings-output", result);
+      showToast("Routing settings saved to env file.", "ok");
+      await refreshConfig();
+    } catch (error) {
+      showToast(`Routing settings update failed: ${String(error)}`, "err");
+      logConsole("routing settings update failed", String(error));
     }
   });
 
@@ -1388,6 +1751,62 @@ async function initialize() {
     } catch (error) {
       showToast(`Automation settings update failed: ${String(error)}`, "err");
       logConsole("automation settings update failed", String(error));
+    }
+  });
+
+  $("#replicate-prediction-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submitter = event.submitter;
+    const data = new FormData(event.currentTarget);
+    let inputPayload = {};
+    try {
+      inputPayload = JSON.parse(String(data.get("input_json") || "{}"));
+    } catch {
+      showToast("Replicate input JSON is invalid.", "err");
+      return;
+    }
+    const body = {
+      model: data.get("model"),
+      input: inputPayload,
+      wait_for_completion: Boolean(document.querySelector('#replicate-prediction-form [name="wait_for_completion"]')?.checked),
+    };
+    try {
+      const result = await withLoading(submitter, () => apiFetch(
+        submitter.dataset.mode === "validate"
+          ? "/admin/api/replicate/predictions/validate"
+          : "/admin/api/replicate/predictions",
+        { method: "POST", body: JSON.stringify(body) },
+      ));
+      renderOutput("#replicate-prediction-output", result);
+      showToast(submitter.dataset.mode === "validate" ? "Replicate validation completed." : "Replicate prediction job queued.", "ok");
+      if (submitter.dataset.mode !== "validate") {
+        await refreshJobs();
+      }
+    } catch (error) {
+      showToast(`Replicate action failed: ${String(error)}`, "err");
+      logConsole("replicate action failed", String(error));
+    }
+  });
+
+  $("#prompt-template-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const body = {
+      name: String(data.get("name") || "").trim(),
+      description: String(data.get("description") || "").trim() || null,
+      model_override: String(data.get("model_override") || "").trim() || null,
+      variables: csv(String(data.get("variables") || "")),
+      template_text: String(data.get("template_text") || ""),
+      metadata: {},
+    };
+    try {
+      const result = await withLoading(event.submitter, () => apiFetch("/admin/api/prompts", { method: "POST", body: JSON.stringify(body) }));
+      renderOutput("#prompt-template-output", result);
+      showToast(`Prompt template saved as ${result.name} v${result.version}.`, "ok");
+      await refreshPrompts();
+    } catch (error) {
+      showToast(`Prompt template save failed: ${String(error)}`, "err");
+      logConsole("prompt template save failed", String(error));
     }
   });
 
@@ -1505,6 +1924,14 @@ async function initialize() {
   });
   $("#refresh-ops-summary").addEventListener("click", async (event) => { try { await withLoading(event.currentTarget, () => refreshOperationsSummary()); } catch (error) { showToast(`Operations summary failed: ${String(error)}`, "err"); logConsole("ops summary refresh failed", String(error)); } });
   $("#refresh-ops-live").addEventListener("click", async (event) => { try { await withLoading(event.currentTarget, () => refreshOperationsLive()); } catch (error) { showToast(`Operations live refresh failed: ${String(error)}`, "err"); logConsole("ops live refresh failed", String(error)); } });
+  $("#refresh-observability")?.addEventListener("click", async (event) => {
+    try {
+      await withLoading(event.currentTarget, () => refreshObservability());
+    } catch (error) {
+      showToast(`Observability refresh failed: ${String(error)}`, "err");
+      logConsole("observability refresh failed", String(error));
+    }
+  });
   $("#ops-logs-filter-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     await refreshOperationsLogs();

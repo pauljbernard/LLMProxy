@@ -8,6 +8,7 @@ class XAIProvider(OpenAIProvider):
     provider_family = "xAI"
     provider_name = "xai"
     price_per_token = 0.000019
+    api_key_config_field = "llmproxy_xai_api_key"
 
     @classmethod
     def from_settings(cls, settings: Settings, *, transport=None) -> "XAIProvider":

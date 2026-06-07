@@ -2,9 +2,11 @@
 
 from collections.abc import AsyncIterator, Sequence
 import json
+from time import time
 
 from app.config import Settings
 from app.providers.base import BaseProvider
+from app.services.cost import estimate_cost_usd
 from app.schemas.chat import ChatCompletionRequest
 
 
@@ -116,9 +118,15 @@ class GoogleProvider(BaseProvider):
         usage = raw_response.get("usageMetadata", {})
         prompt_tokens = int(usage.get("promptTokenCount", 0))
         completion_tokens = int(usage.get("candidatesTokenCount", 0))
-        cost_estimate = round((prompt_tokens + completion_tokens) * self.price_per_token, 6)
+        model_name = str(raw_response.get("modelVersion", self.model_id))
+        cost_estimate = estimate_cost_usd(
+            provider_name=self.provider_name,
+            model_id=model_name,
+            input_tokens=prompt_tokens,
+            output_tokens=completion_tokens,
+        )
         return {
-            "model": str(raw_response.get("modelVersion", self.model_id)),
+            "model": model_name,
             "content": self._extract_content(candidate),
             "input_tokens": prompt_tokens,
             "output_tokens": completion_tokens,
@@ -155,3 +163,33 @@ class GoogleProvider(BaseProvider):
                         "output_tokens": int(usage.get("candidatesTokenCount", 0)),
                         "raw_chunk": raw_chunk,
                     }
+
+    async def healthcheck(self) -> dict[str, object]:
+        api_key = self._require_config(self.api_key, field_name="llmproxy_google_api_key")
+        payload = {
+            "contents": [{"role": "user", "parts": [{"text": "ping"}]}],
+            "generationConfig": {"temperature": 0, "maxOutputTokens": 1},
+        }
+        started_at = time()
+        try:
+            async with self._client(base_url=self.base_url, timeout_seconds=3.0) as client:
+                response = await client.post(
+                    f"/models/{self.model_id}:generateContent",
+                    params={"key": api_key},
+                    json=payload,
+                )
+            return {
+                "ok": response.status_code < 500,
+                "provider": self.provider_name,
+                "model": self.model_id,
+                "status_code": response.status_code,
+                "latency_ms": int((time() - started_at) * 1000),
+            }
+        except Exception as exc:
+            return {
+                "ok": False,
+                "provider": self.provider_name,
+                "model": self.model_id,
+                "error": str(exc),
+                "latency_ms": int((time() - started_at) * 1000),
+            }

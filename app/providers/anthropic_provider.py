@@ -2,9 +2,11 @@
 
 from collections.abc import AsyncIterator, Sequence
 import json
+from time import time
 
 from app.config import Settings
 from app.providers.base import BaseProvider
+from app.services.cost import estimate_cost_usd
 from app.schemas.chat import ChatCompletionRequest
 
 
@@ -101,9 +103,15 @@ class AnthropicProvider(BaseProvider):
         usage = raw_response.get("usage", {})
         prompt_tokens = int(usage.get("input_tokens", 0))
         completion_tokens = int(usage.get("output_tokens", 0))
-        cost_estimate = round((prompt_tokens + completion_tokens) * self.price_per_token, 6)
+        model_name = str(raw_response.get("model", self.model_id))
+        cost_estimate = estimate_cost_usd(
+            provider_name=self.provider_name,
+            model_id=model_name,
+            input_tokens=prompt_tokens,
+            output_tokens=completion_tokens,
+        )
         return {
-            "model": str(raw_response.get("model", self.model_id)),
+            "model": model_name,
             "content": self._extract_content(raw_response.get("content")),
             "input_tokens": prompt_tokens,
             "output_tokens": completion_tokens,
@@ -159,3 +167,36 @@ class AnthropicProvider(BaseProvider):
                         "output_tokens": int(usage.get("output_tokens", 0)),
                         "raw_chunk": raw_chunk,
                     }
+
+    async def healthcheck(self) -> dict[str, object]:
+        api_key = self._require_config(self.api_key, field_name="llmproxy_anthropic_api_key")
+        headers = {
+            "x-api-key": api_key,
+            "anthropic-version": self.anthropic_version,
+            "content-type": "application/json",
+        }
+        payload = {
+            "model": self.model_id,
+            "messages": [{"role": "user", "content": "ping"}],
+            "max_tokens": 1,
+            "temperature": 0,
+        }
+        started_at = time()
+        try:
+            async with self._client(base_url=self.base_url, headers=headers, timeout_seconds=3.0) as client:
+                response = await client.post("/messages", json=payload)
+            return {
+                "ok": response.status_code < 500,
+                "provider": self.provider_name,
+                "model": self.model_id,
+                "status_code": response.status_code,
+                "latency_ms": int((time() - started_at) * 1000),
+            }
+        except Exception as exc:
+            return {
+                "ok": False,
+                "provider": self.provider_name,
+                "model": self.model_id,
+                "error": str(exc),
+                "latency_ms": int((time() - started_at) * 1000),
+            }

@@ -6,6 +6,7 @@ import pytest
 
 from app.providers.base import ProviderConfigurationError
 from app.providers.openai_provider import OpenAIProvider
+from app.services.cost import estimate_cost_usd
 from app.schemas.chat import ChatCompletionRequest
 
 
@@ -64,6 +65,12 @@ def test_openai_provider_normalizes_chat_completion_response() -> None:
     assert result["provider_family"] == "OpenAI"
     assert result["latency_ms"] >= 0
     assert result["raw_response"]["id"] == "chatcmpl_123"
+    assert result["cost_estimate"] == estimate_cost_usd(
+        provider_name="openai",
+        model_id="gpt-5.5",
+        input_tokens=11,
+        output_tokens=2,
+    )
 
 
 def test_openai_provider_passes_through_modern_chat_parameters() -> None:

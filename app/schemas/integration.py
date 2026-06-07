@@ -39,6 +39,9 @@ class FrontierPolicyEntryRequest(BaseModel):
     model_id: str
     domains: list[str]
     task_types: list[str] | None = None
+    tags: list[str] | None = None
+    labels: list[str] | None = None
+    regions: list[str] | None = None
     deployment_mode: str = "production"
     canary_percent: float = 0.0
     endpoint_url: str | None = None

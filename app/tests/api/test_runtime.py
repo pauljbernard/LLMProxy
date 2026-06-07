@@ -2,7 +2,7 @@ from unittest.mock import patch
 
 import pytest
 
-from app.runtime import parse_args, run_migrations, run_scheduler, run_worker, run_worker_iteration
+from app.runtime import parse_args, run_migrations, run_scheduler, run_scheduler_iteration, run_worker, run_worker_iteration
 
 
 def test_parse_args_accepts_api_role() -> None:
@@ -171,6 +171,53 @@ def test_run_worker_iteration_processes_deployment_jobs() -> None:
     assert kwargs["request"].deployment_mode == "production"
 
 
+def test_run_worker_iteration_processes_replicate_prediction_jobs() -> None:
+    job = type(
+        "Job",
+        (),
+        {
+            "id": "job_rep_1",
+            "job_type": "replicate.prediction",
+            "payload_json": {
+                "model": "replicate/hello-world",
+                "input": {"text": "Alice"},
+                "wait_for_completion": True,
+            },
+            "status": "pending",
+            "attempts": 0,
+            "max_attempts": 3,
+            "claimed_at": None,
+            "completed_at": None,
+            "last_error": None,
+        },
+    )()
+
+    class ClaimSession:
+        commit_count = 0
+
+        def commit(self) -> None:
+            self.commit_count += 1
+
+        def close(self) -> None:
+            return None
+
+        def rollback(self) -> None:
+            return None
+
+    claim_session = ClaimSession()
+
+    async def fake_run_replicate_prediction(*, settings, model, input_payload, wait_for_completion):
+        return {"id": "pred_1", "status": "succeeded", "output": "hello Alice"}
+
+    with patch("app.runtime.get_session_factory", return_value=lambda: claim_session):
+        with patch("app.runtime.claim_next_job_for_lane", return_value=job):
+            with patch("app.runtime.run_replicate_prediction", fake_run_replicate_prediction):
+                assert run_worker_iteration() is True
+
+    assert claim_session.commit_count == 1
+    assert job.payload_json["result"]["status"] == "succeeded"
+
+
 def test_run_worker_iteration_passes_job_lane_filters() -> None:
     fake_session = type(
         "FakeSession",
@@ -190,6 +237,36 @@ def test_run_worker_iteration_passes_job_lane_filters() -> None:
     _, kwargs = claim.call_args
     assert kwargs["include_job_types"] == {"training.run"}
     assert kwargs["exclude_job_types"] == {"kpi.generate"}
+
+
+def test_run_scheduler_iteration_resets_virtual_key_budgets_and_logs() -> None:
+    class FakeSession:
+        def __init__(self) -> None:
+            self.commit_count = 0
+            self.closed = False
+
+        def commit(self) -> None:
+            self.commit_count += 1
+
+        def close(self) -> None:
+            self.closed = True
+
+    fake_session = FakeSession()
+    scheduler_result = type("SchedulerResult", (), {"processed_count": 4, "imported_count": 1})()
+    fake_job = type("Job", (), {"id": "job_kpi_1"})()
+
+    with patch("app.runtime.get_session_factory", return_value=lambda: fake_session):
+        with patch("app.runtime.process_pending_events", return_value=scheduler_result):
+            with patch("app.runtime.enqueue_kpi_report_job", return_value=fake_job):
+                with patch("app.runtime.reset_due_virtual_key_budgets", return_value=3) as reset_budgets:
+                    with patch("app.runtime.log_record") as log_record:
+                        run_scheduler_iteration()
+
+    reset_budgets.assert_called_once_with(fake_session)
+    assert fake_session.commit_count == 1
+    assert fake_session.closed is True
+    _, kwargs = log_record.call_args
+    assert kwargs["data"]["virtual_key_budget_resets"] == 3
 
 
 def test_run_worker_recovers_after_job_failure() -> None:

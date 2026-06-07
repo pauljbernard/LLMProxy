@@ -2,9 +2,11 @@
 
 from collections.abc import AsyncIterator, Sequence
 import json
+from time import time
 
 from app.config import Settings
 from app.providers.base import BaseProvider
+from app.services.cost import estimate_cost_usd
 from app.schemas.chat import ChatCompletionRequest
 
 
@@ -15,6 +17,7 @@ class OpenAIProvider(BaseProvider):
     supports_streaming = True
     supports_embeddings = True
     supports_tools = True
+    api_key_config_field = "llmproxy_openai_api_key"
 
     def __init__(
         self,
@@ -46,12 +49,20 @@ class OpenAIProvider(BaseProvider):
         payload: list[dict[str, object]] = []
         for message in messages:
             content = getattr(message, "content", "")
-            payload.append(
-                {
-                    "role": str(getattr(message, "role", "user")),
-                    "content": content,
-                }
-            )
+            item: dict[str, object] = {
+                "role": str(getattr(message, "role", "user")),
+                "content": content,
+            }
+            tool_calls = getattr(message, "tool_calls", None)
+            if isinstance(tool_calls, list) and tool_calls:
+                item["tool_calls"] = tool_calls
+            tool_call_id = getattr(message, "tool_call_id", None)
+            if isinstance(tool_call_id, str) and tool_call_id:
+                item["tool_call_id"] = tool_call_id
+            name = getattr(message, "name", None)
+            if isinstance(name, str) and name:
+                item["name"] = name
+            payload.append(item)
         return payload
 
     @staticmethod
@@ -129,7 +140,7 @@ class OpenAIProvider(BaseProvider):
             headers["Authorization"] = f"Bearer {self.api_key}"
             return headers
         if self.require_api_key:
-            self._require_config(self.api_key, field_name="llmproxy_openai_api_key")
+            self._require_config(self.api_key, field_name=self.api_key_config_field)
         return headers
 
     async def chat(self, request: ChatCompletionRequest) -> dict[str, object]:
@@ -150,9 +161,15 @@ class OpenAIProvider(BaseProvider):
         usage = raw_response.get("usage", {})
         prompt_tokens = int(usage.get("prompt_tokens", 0))
         completion_tokens = int(usage.get("completion_tokens", 0))
-        cost_estimate = round((prompt_tokens + completion_tokens) * self.price_per_token, 6)
+        model_name = str(raw_response.get("model", self.model_id))
+        cost_estimate = estimate_cost_usd(
+            provider_name=self.provider_name,
+            model_id=model_name,
+            input_tokens=prompt_tokens,
+            output_tokens=completion_tokens,
+        )
         return {
-            "model": str(raw_response.get("model", self.model_id)),
+            "model": model_name,
             "content": content,
             "tool_calls": self._extract_tool_calls(message),
             "input_tokens": prompt_tokens,
@@ -214,3 +231,85 @@ class OpenAIProvider(BaseProvider):
             [float(value) for value in item.get("embedding", [])]
             for item in raw_response.get("data", [])
         ]
+
+    async def complete(self, payload: dict[str, object]) -> dict[str, object]:
+        headers = self._headers()
+        async with self._client(base_url=self.base_url, headers=headers) as client:
+            response = await client.post("/completions", json=payload)
+            response.raise_for_status()
+            return response.json()
+
+    async def generate_image(self, payload: dict[str, object]) -> dict[str, object]:
+        headers = self._headers()
+        async with self._client(base_url=self.base_url, headers=headers) as client:
+            response = await client.post("/images/generations", json=payload)
+            response.raise_for_status()
+            return response.json()
+
+    async def moderate(self, payload: dict[str, object]) -> dict[str, object]:
+        headers = self._headers()
+        async with self._client(base_url=self.base_url, headers=headers) as client:
+            response = await client.post("/moderations", json=payload)
+            response.raise_for_status()
+            return response.json()
+
+    async def transcribe(
+        self,
+        *,
+        file_bytes: bytes,
+        filename: str,
+        model: str,
+        language: str | None = None,
+        prompt: str | None = None,
+        response_format: str | None = None,
+        temperature: float | None = None,
+    ) -> dict[str, object]:
+        headers = {}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        elif self.require_api_key:
+            self._require_config(self.api_key, field_name=self.api_key_config_field)
+        data: dict[str, object] = {"model": model}
+        if language is not None:
+            data["language"] = language
+        if prompt is not None:
+            data["prompt"] = prompt
+        if response_format is not None:
+            data["response_format"] = response_format
+        if temperature is not None:
+            data["temperature"] = str(temperature)
+        files = {"file": (filename, file_bytes)}
+        async with self._client(base_url=self.base_url, headers=headers) as client:
+            response = await client.post("/audio/transcriptions", data=data, files=files)
+            response.raise_for_status()
+            return response.json()
+
+    async def synthesize_speech(self, payload: dict[str, object]) -> tuple[bytes, str]:
+        headers = self._headers()
+        async with self._client(base_url=self.base_url, headers=headers) as client:
+            response = await client.post("/audio/speech", json=payload)
+            response.raise_for_status()
+            return response.content, response.headers.get("content-type", "audio/mpeg")
+
+    async def healthcheck(self) -> dict[str, object]:
+        headers = self._headers()
+        started_at = time()
+        try:
+            async with self._client(base_url=self.base_url, headers=headers, timeout_seconds=3.0) as client:
+                response = await client.get("/models")
+            ok = response.status_code < 500
+            return {
+                "ok": ok,
+                "provider": self.provider_name,
+                "model": self.model_id,
+                "status_code": response.status_code,
+                "latency_ms": int((time() - started_at) * 1000),
+            }
+        except Exception as exc:
+            return {
+                "ok": False,
+                "provider": self.provider_name,
+                "model": self.model_id,
+                "error": str(exc),
+                "latency_ms": int((time() - started_at) * 1000),
+            }

@@ -45,11 +45,13 @@ def _validated_hint(value: str | None, *, allowed: set[str], fallback: str) -> s
     return normalized if normalized in allowed else fallback
 
 
-def classify_request(request: ChatCompletionRequest) -> dict[str, str]:
+def classify_request(request: ChatCompletionRequest) -> dict[str, str | list[str]]:
     combined_content = " ".join(message.content.lower() for message in request.messages)
     domain = _validated_hint(request.metadata.domain_hint, allowed=KNOWN_DOMAINS, fallback="general")
     task_type = _validated_hint(request.metadata.task_type_hint, allowed=KNOWN_TASK_TYPES, fallback="question_answer")
     complexity = "high" if len(combined_content.split()) > 120 else "medium"
+    route_tags = [str(item).strip().lower() for item in (request.metadata.route_tags or []) if str(item).strip()]
+    region = str(request.metadata.region_hint).strip().lower() if request.metadata.region_hint else ""
     if request.metadata.privacy_hint is True:
         privacy_level = "private"
     elif request.metadata.privacy_hint is False:
@@ -61,4 +63,6 @@ def classify_request(request: ChatCompletionRequest) -> dict[str, str]:
         "task_type": task_type,
         "complexity": complexity,
         "privacy_level": privacy_level,
+        "region": region,
+        "route_tags": route_tags,
     }

@@ -2,7 +2,8 @@
 
 from collections.abc import AsyncGenerator, Generator
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from hashlib import sha256
 
 from fastapi import Depends, HTTPException, status
@@ -25,6 +26,8 @@ class AuthPrincipal:
     key_id: str | None = None
     owner_id: str | None = None
     models_allowed: tuple[str, ...] = ()
+    rpm_limit: int | None = None
+    tpm_limit: int | None = None
     spend_usd: float | None = None
     max_budget_usd: float | None = None
 
@@ -72,14 +75,67 @@ def enforce_budget(principal: AuthPrincipal) -> None:
     )
 
 
-def record_virtual_key_usage(session: Session, principal: AuthPrincipal, *, cost_usd: float) -> None:
+def _reset_rate_limit_window(record: VirtualAPIKey, *, now: datetime) -> None:
+    if record.rate_limit_window_started_at is None or (now - record.rate_limit_window_started_at) >= timedelta(minutes=1):
+        record.rate_limit_window_started_at = now
+        record.requests_used_current_window = 0
+        record.tokens_used_current_window = 0
+
+
+def enforce_rate_limits(session: Session, principal: AuthPrincipal, *, estimated_tokens: int) -> None:
     if not principal.key_id:
         return
     record = session.get(VirtualAPIKey, principal.key_id)
     if record is None:
         return
+    now = datetime.now(timezone.utc)
+    _reset_rate_limit_window(record, now=now)
+    if record.rpm_limit is not None and (record.requests_used_current_window + 1) > record.rpm_limit:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="This API key has exceeded its requests-per-minute limit.",
+        )
+    if record.tpm_limit is not None and (record.tokens_used_current_window + estimated_tokens) > record.tpm_limit:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="This API key has exceeded its tokens-per-minute limit.",
+        )
+    record.requests_used_current_window += 1
+    record.tokens_used_current_window += max(0, estimated_tokens)
+    session.commit()
+
+
+def release_rate_limit_token_reservation(session: Session, principal: AuthPrincipal, *, reserved_tokens: int) -> None:
+    if not principal.key_id or reserved_tokens <= 0:
+        return
+    record = session.get(VirtualAPIKey, principal.key_id)
+    if record is None:
+        return
+    record.tokens_used_current_window = max(0, int(record.tokens_used_current_window) - reserved_tokens)
+    session.commit()
+
+
+def record_virtual_key_usage(
+    session: Session,
+    principal: AuthPrincipal,
+    *,
+    cost_usd: float,
+    reserved_tokens: int = 0,
+    actual_tokens: int = 0,
+) -> None:
+    if not principal.key_id:
+        return
+    record = session.get(VirtualAPIKey, principal.key_id)
+    if record is None:
+        return
+    now = datetime.now(timezone.utc)
+    _reset_rate_limit_window(record, now=now)
     record.last_used_at = datetime.now(timezone.utc)
-    record.spend_usd = record.spend_usd + cost_usd
+    current_spend = record.spend_usd if record.spend_usd is not None else Decimal("0")
+    record.spend_usd = current_spend + Decimal(str(cost_usd))
+    adjusted_tokens = max(0, int(record.tokens_used_current_window) - max(0, reserved_tokens))
+    record.tokens_used_current_window = adjusted_tokens + max(0, actual_tokens)
+    session.commit()
 
 
 def get_session() -> Generator[Session, None, None]:
@@ -114,6 +170,8 @@ def require_api_token(
             key_id=virtual_key.id,
             owner_id=virtual_key.owner_id,
             models_allowed=tuple(str(item) for item in (virtual_key.models_allowed_json or [])),
+            rpm_limit=virtual_key.rpm_limit,
+            tpm_limit=virtual_key.tpm_limit,
             spend_usd=float(virtual_key.spend_usd),
             max_budget_usd=float(virtual_key.max_budget_usd) if virtual_key.max_budget_usd is not None else None,
         )

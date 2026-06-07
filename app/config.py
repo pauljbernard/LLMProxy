@@ -1,6 +1,7 @@
 """Configuration models for llmProxy."""
 
 from functools import lru_cache
+from importlib import import_module
 from pathlib import Path
 
 from pydantic import Field
@@ -15,6 +16,11 @@ class Settings(BaseSettings):
     llmproxy_api_port: int = 8000
     llmproxy_database_url: str = "postgresql+psycopg://llm:llm@localhost:5432/llmproxy"
     llmproxy_redis_url: str = "redis://localhost:6379/0"
+    llmproxy_prometheus_metrics_enabled: bool = True
+    llmproxy_otel_enabled: bool = False
+    llmproxy_otel_service_name: str = "llmproxy"
+    llmproxy_otel_exporter_otlp_endpoint: str | None = None
+    llmproxy_jaeger_ui_url: str | None = None
     llmproxy_db_pool_size: int = 10
     llmproxy_db_max_overflow: int = 20
     llmproxy_database_wait_timeout_seconds: int = 30
@@ -26,15 +32,108 @@ class Settings(BaseSettings):
     llmproxy_provider_cooldown_seconds: int = 60
     llmproxy_response_cache_enabled: bool = False
     llmproxy_response_cache_ttl_seconds: int = 300
+    llmproxy_semantic_cache_enabled: bool = False
+    llmproxy_semantic_cache_similarity_threshold: float = 0.97
+    llmproxy_semantic_cache_max_candidates: int = 50
+    llmproxy_semantic_cache_embedding_model: str = "text-embedding-3-small"
+    llmproxy_guardrail_pre_hooks: list[str] = Field(default_factory=list)
+    llmproxy_guardrail_post_hooks: list[str] = Field(default_factory=list)
+    llmproxy_guardrail_block_prompt_injection: bool = True
+    llmproxy_guardrail_mask_pii_output: bool = True
+    llmproxy_guardrail_blocked_output_patterns: list[str] = Field(
+        default_factory=lambda: [
+            r"-----BEGIN [A-Z ]*PRIVATE KEY-----",
+            r"\bsk-[A-Za-z0-9]{12,}\b",
+            r"\bAKIA[0-9A-Z]{16}\b",
+        ]
+    )
+    llmproxy_mcp_servers: dict[str, dict[str, object]] = Field(default_factory=dict)
+    llmproxy_mcp_max_tool_roundtrips: int = 3
+    llmproxy_mcp_tool_inventory_ttl_seconds: int = 60
     llmproxy_training_backend_timeout_seconds: int = 14400
     llmproxy_evaluation_timeout_seconds: int = 3600
     llmproxy_worker_include_job_types: str | None = None
     llmproxy_worker_exclude_job_types: str | None = None
     llmproxy_default_route_model: str = "proxy-auto"
+    llmproxy_routing_strategy: str = "balanced"
+    llmproxy_frontier_default_entries: list[dict[str, object]] = Field(
+        default_factory=lambda: [
+            {
+                "entry_type": "frontier",
+                "provider_key": "anthropic",
+                "provider_family": "Anthropic",
+                "model_id": "claude-3-5-sonnet",
+                "domains": ["software_architecture"],
+                "task_types": [],
+                "deployment_mode": "production",
+                "decision_rationale": "Configured default frontier entry for architecture-heavy traffic.",
+            },
+            {
+                "entry_type": "frontier",
+                "provider_key": "google",
+                "provider_family": "Google Gemini",
+                "model_id": "gemini-2.5-pro",
+                "domains": ["research", "analysis"],
+                "task_types": [],
+                "deployment_mode": "production",
+                "decision_rationale": "Configured default frontier entry for research-oriented traffic.",
+            },
+            {
+                "entry_type": "frontier",
+                "provider_key": "openai",
+                "provider_family": "OpenAI",
+                "model_id": "gpt-5.5",
+                "domains": [],
+                "task_types": [],
+                "deployment_mode": "production",
+                "decision_rationale": "Configured default frontier entry for general-purpose coverage.",
+            },
+        ]
+    )
     llmproxy_bearer_token: str = "change-me"
     llmproxy_openai_api_key: str | None = None
     llmproxy_openai_base_url: str = "https://api.openai.com/v1"
     llmproxy_openai_model: str = "gpt-5.5"
+    llmproxy_openai_image_model: str = "gpt-image-1"
+    llmproxy_openai_transcription_model: str = "whisper-1"
+    llmproxy_openai_speech_model: str = "gpt-4o-mini-tts"
+    llmproxy_openai_moderation_model: str = "omni-moderation-latest"
+    llmproxy_groq_api_key: str | None = None
+    llmproxy_groq_base_url: str = "https://api.groq.com/openai/v1"
+    llmproxy_groq_model: str = "llama-3.3-70b-versatile"
+    llmproxy_mistral_api_key: str | None = None
+    llmproxy_mistral_base_url: str = "https://api.mistral.ai/v1"
+    llmproxy_mistral_model: str = "mistral-large-latest"
+    llmproxy_deepseek_api_key: str | None = None
+    llmproxy_deepseek_base_url: str = "https://api.deepseek.com"
+    llmproxy_deepseek_model: str = "deepseek-v4-flash"
+    llmproxy_cohere_api_key: str | None = None
+    llmproxy_cohere_base_url: str = "https://api.cohere.ai/compatibility/v1"
+    llmproxy_cohere_model: str = "command-a-plus-05-2026"
+    llmproxy_together_api_key: str | None = None
+    llmproxy_together_base_url: str = "https://api.together.ai/v1"
+    llmproxy_together_model: str = "openai/gpt-oss-20b"
+    llmproxy_fireworks_api_key: str | None = None
+    llmproxy_fireworks_base_url: str = "https://api.fireworks.ai/inference/v1"
+    llmproxy_fireworks_model: str = "accounts/fireworks/models/llama-v3p1-8b-instruct"
+    llmproxy_perplexity_api_key: str | None = None
+    llmproxy_perplexity_base_url: str = "https://api.perplexity.ai/v1"
+    llmproxy_perplexity_model: str = "sonar-pro"
+    llmproxy_cloudflare_api_token: str | None = None
+    llmproxy_cloudflare_account_id: str | None = None
+    llmproxy_cloudflare_base_url: str = "https://api.cloudflare.com/client/v4"
+    llmproxy_cloudflare_gateway_id: str | None = None
+    llmproxy_cloudflare_workers_ai_model: str = "@cf/moonshotai/kimi-k2.5"
+    llmproxy_huggingface_tgi_api_key: str | None = None
+    llmproxy_huggingface_tgi_base_url: str = "http://localhost:3000/v1"
+    llmproxy_huggingface_tgi_model: str = "tgi"
+    llmproxy_replicate_api_token: str | None = None
+    llmproxy_replicate_base_url: str = "https://api.replicate.com/v1"
+    llmproxy_vertex_ai_access_token: str | None = None
+    llmproxy_vertex_ai_base_url: str | None = None
+    llmproxy_vertex_ai_project_id: str | None = None
+    llmproxy_vertex_ai_location: str = "global"
+    llmproxy_vertex_ai_model: str = "google/gemini-2.5-pro"
     llmproxy_anthropic_api_key: str | None = None
     llmproxy_anthropic_base_url: str = "https://api.anthropic.com/v1"
     llmproxy_anthropic_model: str = "claude-3-5-sonnet"
@@ -147,6 +246,53 @@ class Settings(BaseSettings):
     @property
     def worker_exclude_job_types(self) -> set[str]:
         return self._parse_job_type_filter(self.llmproxy_worker_exclude_job_types)
+
+    @property
+    def provider_configuration(self) -> dict[str, bool]:
+        return {
+            "openai": bool(self.llmproxy_openai_api_key),
+            "groq": bool(self.llmproxy_groq_api_key),
+            "mistral": bool(self.llmproxy_mistral_api_key),
+            "deepseek": bool(self.llmproxy_deepseek_api_key),
+            "cohere": bool(self.llmproxy_cohere_api_key),
+            "together": bool(self.llmproxy_together_api_key),
+            "fireworks": bool(self.llmproxy_fireworks_api_key),
+            "perplexity": bool(self.llmproxy_perplexity_api_key),
+            "cloudflare_workers_ai": bool(
+                self.llmproxy_cloudflare_api_token
+                and self.llmproxy_cloudflare_account_id
+            ),
+            "huggingface_tgi": bool(self.llmproxy_huggingface_tgi_base_url),
+            "replicate": bool(self.llmproxy_replicate_api_token),
+            "vertex_ai": bool(
+                self.llmproxy_vertex_ai_access_token
+                and (
+                    self.llmproxy_vertex_ai_base_url
+                    or self.llmproxy_vertex_ai_project_id
+                )
+            ),
+            "anthropic": bool(self.llmproxy_anthropic_api_key),
+            "google": bool(self.llmproxy_google_api_key),
+            "xai": bool(self.llmproxy_xai_api_key),
+            "azure_openai": bool(self.llmproxy_azure_openai_api_key and self.llmproxy_azure_openai_endpoint),
+            "bedrock": bool(
+                self.llmproxy_bedrock_region
+                and self.llmproxy_bedrock_access_key_id
+                and self.llmproxy_bedrock_secret_access_key
+            ),
+            "ollama": bool(self.llmproxy_ollama_base_url),
+        }
+
+    @staticmethod
+    def _resolve_dotted_callable(path: str):
+        module_name, _, attr_name = path.rpartition(".")
+        if not module_name or not attr_name:
+            raise ValueError(f"Invalid dotted callable path: {path}")
+        module = import_module(module_name)
+        value = getattr(module, attr_name)
+        if not callable(value):
+            raise TypeError(f"Configured guardrail hook is not callable: {path}")
+        return value
 
 
 @lru_cache(maxsize=1)
