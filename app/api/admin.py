@@ -126,6 +126,18 @@ class PromptTemplateAdminRenderRequest(BaseModel):
     variables: dict[str, object] = Field(default_factory=dict)
 
 
+class RoutePreviewRequest(BaseModel):
+    model: str = "proxy-auto"
+    temperature: float = 0.2
+    max_tokens: int = 1024
+    messages: list[dict[str, object]]
+    session_id: str
+    domain_hint: str | None = None
+    task_type_hint: str | None = None
+    region_hint: str | None = None
+    route_tags: list[str] = Field(default_factory=list)
+
+
 def _write_env_value(env_file: Path, key: str, value: str) -> None:
     lines: list[str] = []
     if env_file.exists():
@@ -169,6 +181,16 @@ def _observability_payload(settings: Settings) -> dict[str, Any]:
             "exporter_otlp_endpoint": settings.llmproxy_otel_exporter_otlp_endpoint,
             "jaeger_ui_url": settings.llmproxy_jaeger_ui_url,
         },
+    }
+
+
+def _guardrails_payload(settings: Settings) -> dict[str, Any]:
+    return {
+        "prompt_injection_blocking_enabled": settings.llmproxy_guardrail_block_prompt_injection,
+        "pii_output_masking_enabled": settings.llmproxy_guardrail_mask_pii_output,
+        "pre_hooks": list(settings.llmproxy_guardrail_pre_hooks or []),
+        "post_hooks": list(settings.llmproxy_guardrail_post_hooks or []),
+        "blocked_output_patterns": list(settings.llmproxy_guardrail_blocked_output_patterns or []),
     }
 
 
@@ -394,6 +416,13 @@ def get_observability_settings(
     return _observability_payload(settings)
 
 
+@router.get("/api/guardrails/settings", dependencies=[Depends(require_operator_token)])
+def get_guardrails_settings(
+    settings: Settings = Depends(get_runtime_settings),
+) -> dict[str, Any]:
+    return _guardrails_payload(settings)
+
+
 @router.get("/api/prompts", dependencies=[Depends(require_api_token)])
 def get_prompt_templates(
     session: Session = Depends(get_session),
@@ -466,6 +495,38 @@ def diff_prompt_template_api(
     except PromptTemplateError as exc:
         status_code = status.HTTP_404_NOT_FOUND if "not found" in str(exc).lower() else status.HTTP_400_BAD_REQUEST
         raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+
+
+@router.post("/api/proxy/route-preview", dependencies=[Depends(require_api_token)])
+def preview_proxy_route(
+    request: RoutePreviewRequest,
+    settings: Settings = Depends(get_runtime_settings),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    chat_request = ChatCompletionRequest.model_validate(
+        {
+            "model": request.model,
+            "temperature": request.temperature,
+            "max_tokens": request.max_tokens,
+            "messages": request.messages,
+            "metadata": {
+                "session_id": request.session_id,
+                "domain_hint": request.domain_hint,
+                "task_type_hint": request.task_type_hint,
+                "region_hint": request.region_hint,
+                "route_tags": request.route_tags,
+            },
+        }
+    )
+    classification = classify_request(chat_request)
+    route = select_route("req_admin_route_preview", chat_request, classification, settings, session=session)
+    return {
+        "classification": classification,
+        "selected_provider": route.provider_key,
+        "shadow_provider_keys": list(route.shadow_provider_keys),
+        "selected_entry": route.selected_entry,
+        "decision": route.decision.model_dump(),
+    }
 
 
 @router.post("/api/mcp/servers/{server_name}/validate", dependencies=[Depends(require_operator_token)])
