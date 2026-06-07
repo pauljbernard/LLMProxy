@@ -1150,6 +1150,10 @@ function showVirtualKeyRecord(record, { rawLabel } = {}) {
 
 async function refreshVirtualKeys() {
   const payload = await apiFetch("/admin/api/auth/virtual-keys");
+  const directoryCount = $("#virtual-key-directory-count");
+  if (directoryCount) {
+    directoryCount.textContent = payload.length ? `${payload.length} key${payload.length === 1 ? "" : "s"} on file` : "";
+  }
   renderMetricGrid("#virtual-key-grid", [
     { label: "Total Keys", value: String(payload.length) },
     { label: "Active", value: String(payload.filter((item) => item.status === "active").length) },
@@ -2356,7 +2360,7 @@ async function initialize() {
       tpm_limit: String(data.get("tpm_limit") || "").trim() ? Number(data.get("tpm_limit")) : null,
       max_budget_usd: String(data.get("max_budget_usd") || "").trim() ? Number(data.get("max_budget_usd")) : null,
       budget_reset_period: String(data.get("budget_reset_period") || "").trim() || null,
-      budget_reset_at: String(data.get("budget_reset_at") || "").trim() || null,
+      budget_reset_at: fromDatetimeLocalValue(data.get("budget_reset_at")),
       status: String(data.get("status") || "").trim() || null,
     };
     const method = keyId ? "PATCH" : "POST";
@@ -2364,10 +2368,10 @@ async function initialize() {
     const payload = keyId ? body : Object.fromEntries(Object.entries(body).filter(([key]) => key !== "status"));
     try {
       const result = await withLoading(event.submitter, () => apiFetch(url, { method, body: JSON.stringify(payload) }));
-      renderOutput("#virtual-key-form-output", result);
+      renderRecordView("#virtual-key-form-output", result, VIRTUAL_KEY_RECORD_FIELDS, { rawLabel: "View raw API response" });
       showToast(keyId ? "Virtual key updated." : "Virtual key issued.", "ok");
       if (!keyId && result.token) {
-        showToast("Store the new virtual key token now.", "warn");
+        showToast("Copy the new virtual key token now — it will not be shown again.", "warn");
       }
       populateVirtualKeyForm();
       await refreshVirtualKeys();
