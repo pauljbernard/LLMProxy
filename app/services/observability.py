@@ -19,6 +19,7 @@ from app.db.models import (
     RequestLog,
 )
 from app.services.provider_health import provider_health_snapshot
+from app.services.mcp_runtime import mcp_runtime_snapshot
 
 OPS_LOG_FILE = "operations.jsonl"
 
@@ -180,6 +181,7 @@ def build_operations_summary(session: Session, *, settings: Settings) -> dict[st
     latest_evaluation = evaluations[0].id if evaluations else None
     streaming = build_streaming_telemetry(settings)
     provider_health = provider_health_snapshot()
+    mcp_runtime = mcp_runtime_snapshot()
 
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -194,17 +196,6 @@ def build_operations_summary(session: Session, *, settings: Settings) -> dict[st
         "latest_evaluation_run_id": latest_evaluation,
         "streaming": streaming,
         "provider_health": provider_health,
-        "provider_configuration": {
-            "openai": bool(settings.llmproxy_openai_api_key),
-            "anthropic": bool(settings.llmproxy_anthropic_api_key),
-            "google": bool(settings.llmproxy_google_api_key),
-            "xai": bool(settings.llmproxy_xai_api_key),
-            "azure_openai": bool(settings.llmproxy_azure_openai_api_key and settings.llmproxy_azure_openai_endpoint),
-            "bedrock": bool(
-                settings.llmproxy_bedrock_region
-                and settings.llmproxy_bedrock_access_key_id
-                and settings.llmproxy_bedrock_secret_access_key
-            ),
-            "ollama": bool(settings.llmproxy_ollama_base_url),
-        },
+        "mcp_runtime": mcp_runtime,
+        "provider_configuration": settings.provider_configuration,
     }

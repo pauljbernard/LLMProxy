@@ -5,6 +5,7 @@ from app.integration.jobs import (
     enqueue_deployment_activation_job,
     enqueue_evaluation_run_job,
     enqueue_kpi_report_job,
+    enqueue_replicate_prediction_job,
 )
 from app.integration.outbox import process_pending_events
 from app.runtime import run_worker_iteration
@@ -173,6 +174,21 @@ def test_enqueue_deployment_activation_job_creates_pending_job() -> None:
     assert job.job_type == "deployment.activate"
     assert job.status == "pending"
     assert job.payload_json["model_alias"] == "coding-lora-v1"
+
+
+def test_enqueue_replicate_prediction_job_creates_pending_job() -> None:
+    session = FakeSession()
+
+    job = enqueue_replicate_prediction_job(
+        session,
+        model="replicate/hello-world",
+        input_payload={"text": "Alice"},
+        wait_for_completion=True,
+    )
+
+    assert job.job_type == "replicate.prediction"
+    assert job.status == "pending"
+    assert job.payload_json["model"] == "replicate/hello-world"
 
 
 def test_process_pending_events_enqueues_auto_deploy_for_approved_evaluation() -> None:

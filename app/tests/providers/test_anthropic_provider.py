@@ -136,3 +136,22 @@ def test_anthropic_provider_maps_supported_request_parameters() -> None:
 
 async def _collect(stream) -> list[dict[str, object]]:
     return [chunk async for chunk in stream]
+
+
+def test_anthropic_provider_healthcheck_uses_messages_endpoint() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/messages"
+        payload = json.loads(request.content.decode("utf-8"))
+        assert payload["max_tokens"] == 1
+        assert payload["messages"][0]["content"] == "ping"
+        return httpx.Response(200, json={"id": "msg_ping"})
+
+    provider = AnthropicProvider(
+        "claude-3-5-sonnet",
+        api_key="test-anthropic-key",
+        base_url="https://api.anthropic.com/v1",
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = asyncio.run(provider.healthcheck())
+    assert result["ok"] is True

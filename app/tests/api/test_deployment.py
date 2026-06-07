@@ -135,6 +135,8 @@ def test_upsert_frontier_policy_entry_returns_response(monkeypatch) -> None:
             "provider_key": "openai",
             "model_id": "gpt-5.5",
             "domains": ["general"],
+            "tags": ["finance"],
+            "regions": ["us-east"],
             "deployment_mode": "production",
         },
     )

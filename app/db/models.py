@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, Numeric, String, Text, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -212,9 +212,15 @@ class VirtualAPIKey(Base):
     role: Mapped[str] = mapped_column(String, default="api")
     status: Mapped[str] = mapped_column(String, default="active", index=True)
     models_allowed_json: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    rpm_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tpm_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
     spend_usd: Mapped[Decimal] = mapped_column(Numeric(12, 6), default=Decimal("0"))
     max_budget_usd: Mapped[Decimal | None] = mapped_column(Numeric(12, 6), nullable=True)
+    budget_reset_period: Mapped[str | None] = mapped_column(String, nullable=True)
     budget_reset_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    rate_limit_window_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    requests_used_current_window: Mapped[int] = mapped_column(Integer, default=0)
+    tokens_used_current_window: Mapped[int] = mapped_column(Integer, default=0)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -226,6 +232,24 @@ class RoutingPolicyVersion(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True)
     policy_version: Mapped[str] = mapped_column(String)
     policy_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PromptTemplate(Base):
+    __tablename__ = "prompt_template"
+    __table_args__ = (
+        UniqueConstraint("name", "version", name="uq_prompt_template_name_version"),
+        {"schema": "integration"},
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String, index=True)
+    version: Mapped[int] = mapped_column(Integer, index=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    template_text: Mapped[str] = mapped_column(Text)
+    variables_json: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    model_override: Mapped[str | None] = mapped_column(String, nullable=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

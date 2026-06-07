@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import subprocess
 import time
 from sqlalchemy import text
@@ -21,6 +22,8 @@ from app.evaluation.runner import execute_evaluation_run
 from app.schemas.dataset import DatasetImportRequest
 from app.schemas.integration import DeploymentRequest
 from app.services.observability import log_record
+from app.services.replicate_predictions import run_replicate_prediction
+from app.services.virtual_key_governance import reset_due_virtual_key_budgets
 from app.training.orchestrator import execute_training_run
 
 
@@ -104,6 +107,7 @@ def run_scheduler_iteration() -> None:
     settings = get_settings()
     session = get_session_factory()()
     try:
+        reset_count = reset_due_virtual_key_budgets(session)
         result = process_pending_events(session, settings=settings)
         job = enqueue_kpi_report_job(session)
         session.commit()
@@ -113,7 +117,12 @@ def run_scheduler_iteration() -> None:
             component="runtime.scheduler",
             category="runtime",
             message="Scheduler iteration completed",
-            data={"processed_events": result.processed_count, "imported_count": result.imported_count, "kpi_job_id": job.id},
+            data={
+                "processed_events": result.processed_count,
+                "imported_count": result.imported_count,
+                "kpi_job_id": job.id,
+                "virtual_key_budget_resets": reset_count,
+            },
         )
     finally:
         session.close()
@@ -185,6 +194,16 @@ def run_worker_iteration(
                 ),
                 settings=settings,
             )
+        elif job.job_type == "replicate.prediction":
+            result = asyncio.run(
+                run_replicate_prediction(
+                    settings=settings,
+                    model=str(job.payload_json["model"]),
+                    input_payload=dict(job.payload_json.get("input", {})),
+                    wait_for_completion=bool(job.payload_json.get("wait_for_completion", True)),
+                )
+            )
+            job.payload_json = {**job.payload_json, "result": result}
         else:
             raise RuntimeError(f"Unsupported job type: {job.job_type}")
 

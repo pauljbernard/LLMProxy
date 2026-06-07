@@ -8,10 +8,20 @@ from app.integration.routing_policy import get_latest_policy
 from app.providers.anthropic_provider import AnthropicProvider
 from app.providers.azure_openai_provider import AzureOpenAIProvider
 from app.providers.bedrock_provider import BedrockProvider
+from app.providers.cohere_provider import CohereProvider
+from app.providers.cloudflare_workers_ai_provider import CloudflareWorkersAIProvider
+from app.providers.deepseek_provider import DeepSeekProvider
+from app.providers.fireworks_provider import FireworksProvider
 from app.providers.google_provider import GoogleProvider
+from app.providers.groq_provider import GroqProvider
+from app.providers.huggingface_tgi_provider import HuggingFaceTGIProvider
 from app.providers.local_openai_compatible import LocalOpenAICompatibleProvider
+from app.providers.mistral_provider import MistralProvider
 from app.providers.ollama import OllamaProvider
 from app.providers.openai_provider import OpenAIProvider
+from app.providers.perplexity_provider import PerplexityProvider
+from app.providers.together_provider import TogetherProvider
+from app.providers.vertex_ai_provider import VertexAIProvider
 from app.providers.xai_provider import XAIProvider
 from app.registry.artifact_store import get_model_package_by_alias, list_model_packages
 from app.schemas.provider import ProviderCapability
@@ -48,6 +58,16 @@ def _normalize_openai_compatible_base_url(endpoint_url: str) -> str:
 def get_provider_registry(settings: Settings, session=None) -> dict[str, object]:
     registry = {
         "openai": OpenAIProvider.from_settings(settings),
+        "groq": GroqProvider.from_settings(settings),
+        "mistral": MistralProvider.from_settings(settings),
+        "deepseek": DeepSeekProvider.from_settings(settings),
+        "cohere": CohereProvider.from_settings(settings),
+        "together": TogetherProvider.from_settings(settings),
+        "fireworks": FireworksProvider.from_settings(settings),
+        "perplexity": PerplexityProvider.from_settings(settings),
+        "cloudflare_workers_ai": CloudflareWorkersAIProvider.from_settings(settings),
+        "huggingface_tgi": HuggingFaceTGIProvider.from_settings(settings),
+        "vertex_ai": VertexAIProvider.from_settings(settings),
         "anthropic": AnthropicProvider.from_settings(settings),
         "google": GoogleProvider.from_settings(settings),
         "xai": XAIProvider.from_settings(settings),
@@ -96,10 +116,10 @@ def resolve_provider(
                 base_url=endpoint_url,
                 timeout_seconds=timeout_seconds,
             )
-        if runtime in {"vllm", "llama_cpp", "mlx"}:
+        if runtime in {"vllm", "llama_cpp", "mlx", "tgi"}:
             return LocalOpenAICompatibleProvider(
                 model_id,
-                runtime_name=runtime,
+                runtime_name="huggingface_tgi" if runtime == "tgi" else runtime,
                 base_url=_normalize_openai_compatible_base_url(endpoint_url),
                 timeout_seconds=timeout_seconds,
             )
@@ -110,6 +130,80 @@ def resolve_provider(
             model_id,
             api_key=settings.llmproxy_openai_api_key,
             base_url=str(entry.get("endpoint_url") or entry.get("base_url") or settings.llmproxy_openai_base_url),
+            timeout_seconds=timeout_seconds,
+        )
+    if provider_key == "groq":
+        return GroqProvider(
+            model_id,
+            api_key=settings.llmproxy_groq_api_key,
+            base_url=str(entry.get("endpoint_url") or entry.get("base_url") or settings.llmproxy_groq_base_url),
+            timeout_seconds=timeout_seconds,
+        )
+    if provider_key == "mistral":
+        return MistralProvider(
+            model_id,
+            api_key=settings.llmproxy_mistral_api_key,
+            base_url=str(entry.get("endpoint_url") or entry.get("base_url") or settings.llmproxy_mistral_base_url),
+            timeout_seconds=timeout_seconds,
+        )
+    if provider_key == "deepseek":
+        return DeepSeekProvider(
+            model_id,
+            api_key=settings.llmproxy_deepseek_api_key,
+            base_url=str(entry.get("endpoint_url") or entry.get("base_url") or settings.llmproxy_deepseek_base_url),
+            timeout_seconds=timeout_seconds,
+        )
+    if provider_key == "cohere":
+        return CohereProvider(
+            model_id,
+            api_key=settings.llmproxy_cohere_api_key,
+            base_url=str(entry.get("endpoint_url") or entry.get("base_url") or settings.llmproxy_cohere_base_url),
+            timeout_seconds=timeout_seconds,
+        )
+    if provider_key == "together":
+        return TogetherProvider(
+            model_id,
+            api_key=settings.llmproxy_together_api_key,
+            base_url=str(entry.get("endpoint_url") or entry.get("base_url") or settings.llmproxy_together_base_url),
+            timeout_seconds=timeout_seconds,
+        )
+    if provider_key == "fireworks":
+        return FireworksProvider(
+            model_id,
+            api_key=settings.llmproxy_fireworks_api_key,
+            base_url=str(entry.get("endpoint_url") or entry.get("base_url") or settings.llmproxy_fireworks_base_url),
+            timeout_seconds=timeout_seconds,
+        )
+    if provider_key == "perplexity":
+        return PerplexityProvider(
+            model_id,
+            api_key=settings.llmproxy_perplexity_api_key,
+            base_url=str(entry.get("endpoint_url") or entry.get("base_url") or settings.llmproxy_perplexity_base_url),
+            timeout_seconds=timeout_seconds,
+        )
+    if provider_key == "cloudflare_workers_ai":
+        return CloudflareWorkersAIProvider(
+            model_id,
+            account_id=settings.llmproxy_cloudflare_account_id,
+            api_token=settings.llmproxy_cloudflare_api_token,
+            base_url=str(entry.get("endpoint_url") or entry.get("base_url") or settings.llmproxy_cloudflare_base_url),
+            gateway_id=settings.llmproxy_cloudflare_gateway_id,
+            timeout_seconds=timeout_seconds,
+        )
+    if provider_key == "huggingface_tgi":
+        return HuggingFaceTGIProvider(
+            model_id,
+            api_key=settings.llmproxy_huggingface_tgi_api_key,
+            base_url=str(entry.get("endpoint_url") or entry.get("base_url") or settings.llmproxy_huggingface_tgi_base_url),
+            timeout_seconds=timeout_seconds,
+            require_api_key=False,
+        )
+    if provider_key == "vertex_ai":
+        base_url = str(entry.get("endpoint_url") or entry.get("base_url") or VertexAIProvider._base_url_from_settings(settings))
+        return VertexAIProvider(
+            model_id,
+            api_key=settings.llmproxy_vertex_ai_access_token,
+            base_url=base_url,
             timeout_seconds=timeout_seconds,
         )
     if provider_key == "anthropic":

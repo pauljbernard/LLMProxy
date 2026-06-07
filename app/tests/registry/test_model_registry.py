@@ -43,6 +43,26 @@ def test_resolve_provider_uses_openai_compatible_runtime_for_vllm_local_entry() 
     assert provider.base_url == "http://gpu-node-2:8001/v1"
 
 
+def test_resolve_provider_uses_openai_compatible_runtime_for_tgi_local_entry() -> None:
+    provider = resolve_provider(
+        Settings(),
+        {},
+        provider_key="local:coding-tgi",
+        entry={
+            "entry_type": "local",
+            "runtime": "tgi",
+            "provider_key": "local:coding-tgi",
+            "model_alias": "coding-tgi",
+            "endpoint_url": "http://gpu-node-3:8080",
+        },
+    )
+
+    assert isinstance(provider, LocalOpenAICompatibleProvider)
+    assert provider.provider_name == "huggingface_tgi"
+    assert provider.model_id == "coding-tgi"
+    assert provider.base_url == "http://gpu-node-3:8080/v1"
+
+
 def test_resolve_provider_uses_frontier_policy_model_override() -> None:
     settings = Settings()
     provider = resolve_provider(

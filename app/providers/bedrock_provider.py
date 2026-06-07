@@ -6,10 +6,12 @@ import asyncio
 import json
 from collections.abc import AsyncIterator, Sequence
 from threading import Thread
+from time import time
 from typing import Any
 
 from app.config import Settings
 from app.providers.base import BaseProvider, ProviderConfigurationError
+from app.services.cost import estimate_cost_usd
 from app.schemas.chat import ChatCompletionRequest
 
 
@@ -129,9 +131,15 @@ class BedrockProvider(BaseProvider):
         usage = raw_response.get("usage", {})
         prompt_tokens = int(usage.get("input_tokens", 0))
         completion_tokens = int(usage.get("output_tokens", 0))
-        cost_estimate = round((prompt_tokens + completion_tokens) * self.price_per_token, 6)
+        model_name = str(raw_response.get("model", self.model_id))
+        cost_estimate = estimate_cost_usd(
+            provider_name=self.provider_name,
+            model_id=model_name,
+            input_tokens=prompt_tokens,
+            output_tokens=completion_tokens,
+        )
         return {
-            "model": str(raw_response.get("model", self.model_id)),
+            "model": model_name,
             "content": self._extract_content(raw_response.get("content")),
             "input_tokens": prompt_tokens,
             "output_tokens": completion_tokens,
@@ -201,3 +209,28 @@ class BedrockProvider(BaseProvider):
             if isinstance(item, BaseException):
                 raise item
             yield item
+
+    async def healthcheck(self) -> dict[str, object]:
+        payload = {
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": 1,
+            "temperature": 0,
+            "messages": [{"role": "user", "content": "ping"}],
+        }
+        started_at = time()
+        try:
+            await asyncio.to_thread(self._invoke_model_sync, payload)
+            return {
+                "ok": True,
+                "provider": self.provider_name,
+                "model": self.model_id,
+                "latency_ms": int((time() - started_at) * 1000),
+            }
+        except Exception as exc:
+            return {
+                "ok": False,
+                "provider": self.provider_name,
+                "model": self.model_id,
+                "error": str(exc),
+                "latency_ms": int((time() - started_at) * 1000),
+            }

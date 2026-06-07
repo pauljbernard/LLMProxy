@@ -24,12 +24,36 @@ def _is_canary_session(session_id: str, canary_percent: float) -> bool:
     return bucket < int(canary_percent * 100)
 
 
-def _match_policy_entries(policy: dict[str, object], *, domain: str, task_type: str) -> tuple[list[dict[str, object]], list[dict[str, object]], list[dict[str, object]]]:
+def _entry_tags(entry: dict[str, object]) -> list[str]:
+    values = list(entry.get("tags", [])) + list(entry.get("labels", []))
+    seen: list[str] = []
+    for item in values:
+        value = str(item).strip().lower()
+        if value and value not in seen:
+            seen.append(value)
+    return seen
+
+
+def _entry_regions(entry: dict[str, object]) -> list[str]:
+    return [str(item).strip().lower() for item in entry.get("regions", []) if str(item).strip()]
+
+
+def _match_policy_entries(
+    policy: dict[str, object],
+    *,
+    domain: str,
+    task_type: str,
+    route_tags: list[str] | None = None,
+    region: str = "",
+) -> tuple[list[dict[str, object]], list[dict[str, object]], list[dict[str, object]]]:
+    route_tags = [str(item).strip().lower() for item in (route_tags or []) if str(item).strip()]
     entries = [
         entry
         for entry in policy.get("entries", [])
-        if domain in entry.get("domains", [])
+        if (not entry.get("domains") or domain in entry.get("domains", []))
         and (not entry.get("task_types") or task_type in entry.get("task_types", []))
+        and (not _entry_tags(entry) or bool(set(_entry_tags(entry)) & set(route_tags)))
+        and (not _entry_regions(entry) or (region and region in _entry_regions(entry)))
     ]
     production = [entry for entry in entries if entry.get("deployment_mode") == "production"]
     canary = [entry for entry in entries if entry.get("deployment_mode") == "canary"]
@@ -53,6 +77,61 @@ def _entry_specificity(entry: dict[str, object], *, task_type: str) -> int:
     return 1 if task_types and task_type in task_types else 0
 
 
+def _entry_tag_specificity(entry: dict[str, object], *, route_tags: list[str]) -> int:
+    entry_tags = _entry_tags(entry)
+    return len(set(entry_tags) & set(route_tags)) if entry_tags else 0
+
+
+def _entry_region_specificity(entry: dict[str, object], *, region: str) -> int:
+    entry_regions = _entry_regions(entry)
+    return 1 if region and region in entry_regions else 0
+
+
+def _provider_cost_hint(provider_key: str) -> float:
+    return {
+        "local": 0.0,
+        "ollama": 0.0,
+        "huggingface_tgi": 0.0,
+        "fireworks": 0.000003,
+        "groq": 0.000003,
+        "cloudflare_workers_ai": 0.000004,
+        "deepseek": 0.000002,
+        "together": 0.000004,
+        "mistral": 0.000008,
+        "perplexity": 0.00001,
+        "vertex_ai": 0.00001,
+        "cohere": 0.000015,
+        "google": 0.000018,
+        "xai": 0.000019,
+        "openai": 0.00002,
+        "azure_openai": 0.000021,
+        "bedrock": 0.000023,
+        "anthropic": 0.000024,
+    }.get(provider_key, 0.00002)
+
+
+def _provider_latency_hint(provider_key: str) -> float:
+    return {
+        "local": 35.0,
+        "ollama": 35.0,
+        "huggingface_tgi": 45.0,
+        "groq": 60.0,
+        "fireworks": 70.0,
+        "cloudflare_workers_ai": 75.0,
+        "deepseek": 90.0,
+        "together": 100.0,
+        "openai": 140.0,
+        "azure_openai": 145.0,
+        "xai": 150.0,
+        "cohere": 160.0,
+        "vertex_ai": 170.0,
+        "google": 180.0,
+        "mistral": 185.0,
+        "anthropic": 220.0,
+        "bedrock": 240.0,
+    }.get(provider_key, 150.0)
+
+
 def _entry_quality_score(entry: dict[str, object]) -> float:
     quality_summary = entry.get("quality_summary", {})
     if isinstance(quality_summary, dict):
@@ -65,20 +144,94 @@ def _entry_quality_score(entry: dict[str, object]) -> float:
     return 0.0
 
 
+def _entry_cost_score(entry: dict[str, object]) -> float:
+    for key in ("price_per_token", "cost_per_token", "estimated_cost_per_token"):
+        value = entry.get(key)
+        if value is not None:
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                break
+    cost_summary = entry.get("cost_summary", {})
+    if isinstance(cost_summary, dict):
+        for key in ("price_per_token", "estimated_cost_per_token"):
+            value = cost_summary.get(key)
+            if value is not None:
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    break
+    provider_key = str(entry.get("provider_key", ""))
+    if provider_key.startswith("local:"):
+        return _provider_cost_hint("local")
+    return _provider_cost_hint(provider_key)
+
+
+def _entry_latency_score(entry: dict[str, object]) -> float:
+    for key in ("latency_ms", "median_latency_ms", "p50_latency_ms"):
+        value = entry.get(key)
+        if value is not None:
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                break
+    latency_summary = entry.get("latency_summary", {})
+    if isinstance(latency_summary, dict):
+        for key in ("p50_ms", "median_ms"):
+            value = latency_summary.get(key)
+            if value is not None:
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    break
+    provider_key = str(entry.get("provider_key", ""))
+    if provider_key.startswith("local:"):
+        return _provider_latency_hint("local")
+    return _provider_latency_hint(provider_key)
+
+
 def _entry_recency(entry: dict[str, object]) -> str:
     return str(entry.get("deployed_at") or entry.get("created_at") or entry.get("policy_version") or entry.get("model_alias") or "")
 
 
-def _select_best_entry(entries: list[dict[str, object]], *, task_type: str) -> dict[str, object] | None:
+def _entry_sort_key(
+    entry: dict[str, object],
+    *,
+    task_type: str,
+    route_tags: list[str],
+    region: str,
+    strategy: str,
+) -> tuple[float, ...] | tuple[float, ... , str]:
+    specificity = float(_entry_specificity(entry, task_type=task_type))
+    tag_specificity = float(_entry_tag_specificity(entry, route_tags=route_tags))
+    region_specificity = float(_entry_region_specificity(entry, region=region))
+    quality = _entry_quality_score(entry)
+    cost = _entry_cost_score(entry)
+    latency = _entry_latency_score(entry)
+    recency = _entry_recency(entry)
+    if strategy == "latency":
+        return (specificity, tag_specificity, region_specificity, -latency, quality, -cost, recency)
+    if strategy == "cost":
+        return (specificity, tag_specificity, region_specificity, -cost, quality, -latency, recency)
+    if strategy == "quality":
+        return (specificity, tag_specificity, region_specificity, quality, -cost, -latency, recency)
+    balanced = quality - (cost * 1000.0) - (latency / 1000.0)
+    return (specificity, tag_specificity, region_specificity, balanced, quality, -cost, -latency, recency)
+
+
+def _select_best_entry(
+    entries: list[dict[str, object]],
+    *,
+    task_type: str,
+    route_tags: list[str],
+    region: str,
+    strategy: str,
+) -> dict[str, object] | None:
     if not entries:
         return None
     ranked = sorted(
         entries,
-        key=lambda entry: (
-            _entry_specificity(entry, task_type=task_type),
-            _entry_quality_score(entry),
-            _entry_recency(entry),
-        ),
+        key=lambda entry: _entry_sort_key(entry, task_type=task_type, route_tags=route_tags, region=region, strategy=strategy),
         reverse=True,
     )
     return ranked[0]
@@ -109,6 +262,54 @@ def _default_fallbacks(*, settings: Settings, primary_provider: str) -> list[Fal
         fallbacks.append(FallbackTarget(order=order, provider=provider, model=model))
         order += 1
     return fallbacks
+
+
+def _default_frontier_entries(settings: Settings) -> dict[str, object]:
+    entries: list[dict[str, object]] = []
+    model_by_provider = {
+        "openai": settings.llmproxy_openai_model,
+        "anthropic": settings.llmproxy_anthropic_model,
+        "google": settings.llmproxy_google_model,
+        "xai": settings.llmproxy_xai_model,
+        "groq": settings.llmproxy_groq_model,
+        "mistral": settings.llmproxy_mistral_model,
+        "deepseek": settings.llmproxy_deepseek_model,
+        "cohere": settings.llmproxy_cohere_model,
+        "together": settings.llmproxy_together_model,
+        "fireworks": settings.llmproxy_fireworks_model,
+        "perplexity": settings.llmproxy_perplexity_model,
+        "cloudflare_workers_ai": settings.llmproxy_cloudflare_workers_ai_model,
+        "huggingface_tgi": settings.llmproxy_huggingface_tgi_model,
+        "vertex_ai": settings.llmproxy_vertex_ai_model,
+        "azure_openai": settings.llmproxy_azure_openai_model,
+        "bedrock": settings.llmproxy_bedrock_model,
+    }
+    configured = settings.provider_configuration
+    for item in settings.llmproxy_frontier_default_entries:
+        entry = dict(item)
+        provider_key = str(entry.get("provider_key", ""))
+        if not provider_key:
+            continue
+        if configured.get(provider_key, False) is False and any(configured.values()):
+            continue
+        entry.setdefault("model_id", model_by_provider.get(provider_key, settings.llmproxy_openai_model))
+        entries.append(entry)
+    if entries:
+        return {"entries": entries}
+    return {
+        "entries": [
+            {
+                "entry_type": "frontier",
+                "provider_key": "openai",
+                "provider_family": "OpenAI",
+                "model_id": settings.llmproxy_openai_model,
+                "domains": [],
+                "task_types": [],
+                "deployment_mode": "production",
+                "decision_rationale": "Fallback default frontier entry for general-purpose coverage.",
+            }
+        ]
+    }
 
 
 def _policy_ranked_alternatives(
@@ -260,6 +461,8 @@ def select_route(
     task_type = classification["task_type"]
     privacy_level = classification["privacy_level"]
     complexity = classification["complexity"]
+    route_tags = [str(item) for item in classification.get("route_tags", [])]
+    region = str(classification.get("region", ""))
     policy_record = get_latest_policy_record(session)
     if policy_record is None:
         policy = {"entries": []}
@@ -272,6 +475,8 @@ def select_route(
         policy,
         domain=domain,
         task_type=task_type,
+        route_tags=route_tags,
+        region=region,
     )
     if (
         request.model == "proxy-local"
@@ -316,19 +521,20 @@ def select_route(
     frontier_production = [entry for entry in production_entries if _entry_type(entry) == "frontier"]
     local_canary = [entry for entry in canary_entries if _entry_type(entry) == "local"]
     frontier_canary = [entry for entry in canary_entries if _entry_type(entry) == "frontier"]
+    strategy = str(settings.llmproxy_routing_strategy or "balanced").strip().lower()
 
     selected_policy_entry = None
     mode = None
-    canary_candidate = _select_best_entry(local_canary, task_type=task_type) or _select_best_entry(frontier_canary, task_type=task_type)
+    canary_candidate = _select_best_entry(local_canary, task_type=task_type, route_tags=route_tags, region=region, strategy=strategy) or _select_best_entry(frontier_canary, task_type=task_type, route_tags=route_tags, region=region, strategy=strategy)
     if canary_candidate is not None and _is_canary_session(request.metadata.session_id, float(canary_candidate.get("canary_percent", 0.0))):
         selected_policy_entry = canary_candidate
         mode = "canary"
     if selected_policy_entry is None:
-        selected_policy_entry = _select_best_entry(local_production, task_type=task_type)
+        selected_policy_entry = _select_best_entry(local_production, task_type=task_type, route_tags=route_tags, region=region, strategy=strategy)
         if selected_policy_entry is not None:
             mode = "production"
     if selected_policy_entry is None:
-        selected_policy_entry = _select_best_entry(frontier_production, task_type=task_type)
+        selected_policy_entry = _select_best_entry(frontier_production, task_type=task_type, route_tags=route_tags, region=region, strategy=strategy)
         if selected_policy_entry is not None:
             mode = "production"
 
@@ -348,69 +554,34 @@ def select_route(
         route.entry_index = policy_entries_by_provider
         return route
 
-    if domain == "software_architecture" or request.model == "proxy-teacher":
-        route = _build_frontier_default_route(
-            request_id=request_id,
-            session_id=request.metadata.session_id,
-            policy_version=resolved_policy_version,
-            provider_key="anthropic",
-            provider_family="Anthropic",
-            model_id=settings.llmproxy_anthropic_model,
-            rationale="Selected Anthropic for architecture-heavy or teacher-routed traffic.",
-            predicted_cost_class="high",
-            predicted_latency_class="medium",
-            ranked_alternatives=[
-                RankedAlternative(rank=1, provider="anthropic", model=settings.llmproxy_anthropic_model, score=0.95),
-                RankedAlternative(rank=2, provider="openai", model=settings.llmproxy_openai_model, score=0.91),
-                RankedAlternative(rank=3, provider="google", model=settings.llmproxy_google_model, score=0.89),
-            ],
-            fallback_chain=[
-                FallbackTarget(order=1, provider="openai", model=settings.llmproxy_openai_model),
-                FallbackTarget(order=2, provider="google", model=settings.llmproxy_google_model),
-            ],
-        )
-    elif domain in {"research", "analysis"}:
-        route = _build_frontier_default_route(
-            request_id=request_id,
-            session_id=request.metadata.session_id,
-            policy_version=resolved_policy_version,
-            provider_key="google",
-            provider_family="Google Gemini",
-            model_id=settings.llmproxy_google_model,
-            rationale="Selected Google Gemini for research-oriented traffic.",
-            predicted_cost_class="medium",
-            predicted_latency_class="medium",
-            ranked_alternatives=[
-                RankedAlternative(rank=1, provider="google", model=settings.llmproxy_google_model, score=0.94),
-                RankedAlternative(rank=2, provider="openai", model=settings.llmproxy_openai_model, score=0.90),
-                RankedAlternative(rank=3, provider="xai", model=settings.llmproxy_xai_model, score=0.86),
-            ],
-            fallback_chain=[
-                FallbackTarget(order=1, provider="openai", model=settings.llmproxy_openai_model),
-                FallbackTarget(order=2, provider="xai", model=settings.llmproxy_xai_model),
-            ],
-        )
-    else:
-        route = _build_frontier_default_route(
-            request_id=request_id,
-            session_id=request.metadata.session_id,
-            policy_version=resolved_policy_version,
-            provider_key="openai",
-            provider_family="OpenAI",
-            model_id=settings.llmproxy_openai_model,
-            rationale="Selected OpenAI for general-purpose coverage and balanced quality.",
-            predicted_cost_class="medium" if complexity == "medium" else "high",
-            predicted_latency_class="medium",
-            ranked_alternatives=[
-                RankedAlternative(rank=1, provider="openai", model=settings.llmproxy_openai_model, score=0.95),
-                RankedAlternative(rank=2, provider="anthropic", model=settings.llmproxy_anthropic_model, score=0.90),
-                RankedAlternative(rank=3, provider="google", model=settings.llmproxy_google_model, score=0.88),
-            ],
-            fallback_chain=[
-                FallbackTarget(order=1, provider="anthropic", model=settings.llmproxy_anthropic_model),
-                FallbackTarget(order=2, provider="google", model=settings.llmproxy_google_model),
-            ],
-        )
+    default_frontier_policy = _default_frontier_entries(settings)
+    default_production, _, _ = _match_policy_entries(
+        default_frontier_policy,
+        domain=domain,
+        task_type=task_type,
+        route_tags=route_tags,
+        region=region,
+    )
+    default_entry = _select_best_entry(default_production, task_type=task_type, route_tags=route_tags, region=region, strategy=strategy)
+    if default_entry is None and request.model == "proxy-teacher":
+        teacher_candidates = [
+            entry
+            for entry in default_frontier_policy.get("entries", [])
+            if str(entry.get("provider_key")) in {"anthropic", "openai", "google"}
+        ]
+        default_entry = _select_best_entry(teacher_candidates, task_type=task_type, route_tags=route_tags, region=region, strategy="quality")
+    if default_entry is None:
+        raise ValueError("No default frontier route is available for the current configuration.")
+    route = _route_from_policy(
+        request_id=request_id,
+        session_id=request.metadata.session_id,
+        policy_version=resolved_policy_version,
+        selected_entry=default_entry,
+        shadow_entries=shadow_entries,
+        complexity=complexity,
+        settings=settings,
+        mode="production",
+    )
 
     route.shadow_provider_keys = shadow_provider_keys
     route.entry_index = policy_entries_by_provider

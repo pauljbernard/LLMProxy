@@ -97,3 +97,23 @@ def test_azure_openai_provider_streams_chat_chunks() -> None:
 
 async def _collect(stream) -> list[dict[str, object]]:
     return [chunk async for chunk in stream]
+
+
+def test_azure_openai_provider_healthcheck_uses_chat_completions() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/openai/deployments/gpt-5.5/chat/completions"
+        payload = json.loads(request.content.decode("utf-8"))
+        assert payload["max_tokens"] == 1
+        assert payload["messages"][0]["content"] == "ping"
+        return httpx.Response(200, json={"id": "chatcmpl_health"})
+
+    provider = AzureOpenAIProvider(
+        "gpt-5.5",
+        api_key="test-azure-key",
+        endpoint="https://example-resource.openai.azure.com",
+        api_version="2024-10-21",
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = asyncio.run(provider.healthcheck())
+    assert result["ok"] is True

@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
-from secrets import token_urlsafe
 from typing import Any
-from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from fastapi.responses import FileResponse, PlainTextResponse
+from pydantic import BaseModel, Field
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
@@ -22,9 +21,23 @@ from app.api.dependencies import (
     require_api_token,
     require_operator_token,
 )
+from app.api.virtual_keys import (
+    VirtualKeyCreateRequest,
+    VirtualKeyCreateResponse,
+    VirtualKeyRotateResponse,
+    VirtualKeyUpdateRequest,
+    VirtualKeyView,
+    create_virtual_key_record,
+    disable_virtual_key_record,
+    list_virtual_key_records,
+    rotate_virtual_key_record,
+    update_virtual_key_record,
+    virtual_key_payload,
+)
 from app.config import Settings
-from app.db.models import DatasetExport, DatasetImport, DatasetVersion, EvaluationRun, IntegrationEvent, JobQueueRecord, JudgeCritique, ModelPerformanceSample, ModelResponse, RequestLog, RoutingDecisionRecord, TrainingCandidate, TrainingRun, VirtualAPIKey
+from app.db.models import DatasetExport, DatasetImport, DatasetVersion, EvaluationRun, IntegrationEvent, JobQueueRecord, JudgeCritique, ModelPerformanceSample, ModelResponse, PromptTemplate, RequestLog, RoutingDecisionRecord, TrainingCandidate, TrainingRun
 from app.integration.outbox import process_pending_events
+from app.integration.jobs import enqueue_replicate_prediction_job
 from app.operator_payloads import (
     dataset_export_payload,
     dataset_import_payload,
@@ -41,7 +54,20 @@ from app.proxy.classifier import classify_request
 from app.proxy.router import select_route
 from app.registry.model_registry import get_provider_registry, list_provider_capabilities, resolve_provider
 from app.runtime import run_scheduler_iteration, run_worker_iteration
+from app.services.cost import pricing_catalog
+from app.services.mcp_gateway import _list_mcp_tools, inspect_mcp_server
 from app.services.observability import build_operations_summary, log_record, tail_log_records
+from app.services.prompt_templates import (
+    PromptTemplateCreateInput,
+    PromptTemplateError,
+    create_prompt_template,
+    diff_prompt_templates,
+    get_prompt_template,
+    list_prompt_templates,
+    prompt_template_payload,
+    render_prompt_template,
+)
+from app.services.replicate_predictions import run_replicate_prediction
 from app.schemas.chat import ChatCompletionRequest
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -69,59 +95,36 @@ class StreamingValidationRequest(BaseModel):
     max_chunks: int = 12
 
 
-class VirtualKeyCreateRequest(BaseModel):
-    display_name: str | None = None
-    owner_id: str | None = None
-    role: str = "api"
-    models_allowed: list[str] = []
-    max_budget_usd: float | None = None
+class ProviderValidationRequest(BaseModel):
+    provider_key: str
+    prompt: str = "Say hello briefly."
 
 
-class VirtualKeyUpdateRequest(BaseModel):
-    display_name: str | None = None
-    owner_id: str | None = None
-    role: str | None = None
-    models_allowed: list[str] | None = None
-    max_budget_usd: float | None = None
-    status: str | None = None
+class ReplicatePredictionRequest(BaseModel):
+    model: str
+    input: dict[str, object]
+    wait_for_completion: bool = True
 
 
-class VirtualKeyView(BaseModel):
-    id: str
-    key_prefix: str
-    display_name: str | None = None
-    owner_id: str | None = None
-    role: str
-    status: str
-    models_allowed: list[str]
-    spend_usd: float
-    max_budget_usd: float | None = None
-    last_used_at: str | None = None
-    created_at: str
+class RoutingSettingsUpdateRequest(BaseModel):
+    routing_strategy: str
+    frontier_default_entries: list[dict[str, object]]
+    env_file: str = ".env.local"
 
 
-class VirtualKeyCreateResponse(VirtualKeyView):
-    token: str
+class PromptTemplateAdminCreateRequest(BaseModel):
+    name: str
+    template_text: str
+    description: str | None = None
+    variables: list[str] = Field(default_factory=list)
+    model_override: str | None = None
+    metadata: dict[str, object] = Field(default_factory=dict)
 
 
-class VirtualKeyRotateResponse(VirtualKeyCreateResponse):
-    previous_key_prefix: str
+class PromptTemplateAdminRenderRequest(BaseModel):
+    version: int | None = None
+    variables: dict[str, object] = Field(default_factory=dict)
 
-
-def _virtual_key_payload(item: VirtualAPIKey) -> dict[str, Any]:
-    return {
-        "id": item.id,
-        "key_prefix": item.key_prefix,
-        "display_name": item.display_name,
-        "owner_id": item.owner_id,
-        "role": item.role,
-        "status": item.status,
-        "models_allowed": [str(value) for value in (item.models_allowed_json or [])],
-        "spend_usd": float(item.spend_usd) if item.spend_usd is not None else 0.0,
-        "max_budget_usd": float(item.max_budget_usd) if item.max_budget_usd is not None else None,
-        "last_used_at": item.last_used_at.isoformat() if item.last_used_at else None,
-        "created_at": item.created_at.isoformat(),
-    }
 
 def _write_env_value(env_file: Path, key: str, value: str) -> None:
     lines: list[str] = []
@@ -135,6 +138,38 @@ def _write_env_value(env_file: Path, key: str, value: str) -> None:
     else:
         lines.append(rendered)
     env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _routing_settings_payload(settings: Settings) -> dict[str, Any]:
+    return {
+        "llmproxy_routing_strategy": settings.llmproxy_routing_strategy,
+        "llmproxy_frontier_default_entries": settings.llmproxy_frontier_default_entries,
+    }
+
+
+def _observability_payload(settings: Settings) -> dict[str, Any]:
+    prometheus_path = "/metrics/prometheus"
+    return {
+        "prometheus": {
+            "enabled": settings.llmproxy_prometheus_metrics_enabled,
+            "path": prometheus_path,
+            "scrape_config": {
+                "job_name": "llmproxy",
+                "metrics_path": prometheus_path,
+                "static_configs": [{"targets": [f"127.0.0.1:{settings.llmproxy_api_port}"]}],
+            },
+        },
+        "logs_export": {
+            "formats": ["ndjson"],
+            "endpoint": "/admin/api/ops/logs/export",
+        },
+        "otel": {
+            "enabled": settings.llmproxy_otel_enabled,
+            "service_name": settings.llmproxy_otel_service_name,
+            "exporter_otlp_endpoint": settings.llmproxy_otel_exporter_otlp_endpoint,
+            "jaeger_ui_url": settings.llmproxy_jaeger_ui_url,
+        },
+    }
 
 
 def _streaming_route_examples(session: Session, settings: Settings) -> list[dict[str, Any]]:
@@ -178,6 +213,98 @@ def _streaming_route_examples(session: Session, settings: Settings) -> list[dict
         )
     return rows
 
+
+async def _mcp_server_payloads(settings: Settings) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for server_name, raw in settings.llmproxy_mcp_servers.items():
+        config = raw if isinstance(raw, dict) else {}
+        tools: list[dict[str, object]] = []
+        error: str | None = None
+        try:
+            tools = await _list_mcp_tools(settings, server_name)
+        except Exception as exc:
+            error = str(exc)
+        rows.append(
+            {
+                "server": server_name,
+                "transport": str(config.get("transport", "stdio")),
+                "command": str(config.get("command", "")),
+                "cwd": config.get("cwd"),
+                "timeout_seconds": float(config.get("timeout_seconds", 30.0)),
+                "configured": bool(config.get("command")),
+                "tool_count": len(tools),
+                "tools": [
+                    {
+                        "name": str(item.get("name", "")),
+                        "description": item.get("description"),
+                        "input_schema": item.get("inputSchema"),
+                    }
+                    for item in tools
+                ],
+                "error": error,
+            }
+        )
+    return rows
+
+
+def _provider_guides(settings: Settings) -> list[dict[str, Any]]:
+    return [
+        {
+            "provider_key": "cloudflare_workers_ai",
+            "label": "Cloudflare Workers AI",
+            "provider_family": "Cloudflare Workers AI",
+            "configured": settings.provider_configuration.get("cloudflare_workers_ai", False),
+            "config_keys": [
+                "LLMPROXY_CLOUDFLARE_API_TOKEN",
+                "LLMPROXY_CLOUDFLARE_ACCOUNT_ID",
+                "LLMPROXY_CLOUDFLARE_WORKERS_AI_MODEL",
+                "LLMPROXY_CLOUDFLARE_GATEWAY_ID",
+            ],
+            "recommended_base_url": settings.llmproxy_cloudflare_base_url,
+            "validation_mode": "native_chat",
+            "notes": [
+                "Uses Cloudflare's native /accounts/{account_id}/ai/run/{model} API.",
+                "Requires Cloudflare account-scoped auth rather than OpenAI API keys.",
+                "Gateway ID is optional but recommended when routing through AI Gateway.",
+            ],
+        },
+        {
+            "provider_key": "huggingface_tgi",
+            "label": "HuggingFace TGI",
+            "provider_family": "HuggingFace TGI",
+            "configured": settings.provider_configuration.get("huggingface_tgi", False),
+            "config_keys": [
+                "LLMPROXY_HUGGINGFACE_TGI_BASE_URL",
+                "LLMPROXY_HUGGINGFACE_TGI_MODEL",
+                "LLMPROXY_HUGGINGFACE_TGI_API_KEY",
+            ],
+            "recommended_base_url": settings.llmproxy_huggingface_tgi_base_url,
+            "validation_mode": "openai_compatible",
+            "notes": [
+                "Targets TGI Messages API /v1/chat/completions.",
+                "Works as a named provider and as local runtime='tgi'.",
+                "API key is optional for self-hosted endpoints.",
+            ],
+        },
+        {
+            "provider_key": "replicate",
+            "label": "Replicate",
+            "provider_family": "Replicate Predictions",
+            "configured": settings.provider_configuration.get("replicate", False),
+            "config_keys": [
+                "LLMPROXY_REPLICATE_API_TOKEN",
+                "LLMPROXY_REPLICATE_BASE_URL",
+            ],
+            "recommended_base_url": settings.llmproxy_replicate_base_url,
+            "validation_mode": "prediction_job",
+            "notes": [
+                "Replicate is exposed as a prediction/job backend, not a chat-completions provider.",
+                "Use model IDs accepted by POST /v1/predictions, such as owner/name or owner/name:version.",
+                "Prediction results are persisted on the queued job payload for operator inspection.",
+            ],
+        },
+    ]
+
 @router.get("")
 def admin_console() -> FileResponse:
     return FileResponse(STATIC_ROOT / "index.html")
@@ -195,12 +322,174 @@ def get_config(
     return settings_payload(settings)
 
 
+@router.get("/api/routing/settings", dependencies=[Depends(require_api_token)])
+def get_routing_settings(
+    settings: Settings = Depends(get_runtime_settings),
+) -> dict[str, Any]:
+    return _routing_settings_payload(settings)
+
+
+@router.post("/api/routing/settings", dependencies=[Depends(require_operator_token)])
+def set_routing_settings(
+    request: RoutingSettingsUpdateRequest,
+    settings: Settings = Depends(get_runtime_settings),
+) -> dict[str, Any]:
+    env_file = Path(request.env_file)
+    _write_env_value(env_file, "LLMPROXY_ROUTING_STRATEGY", request.routing_strategy)
+    _write_env_value(env_file, "LLMPROXY_FRONTIER_DEFAULT_ENTRIES", json.dumps(request.frontier_default_entries))
+    log_record(
+        settings,
+        level="INFO",
+        component="admin.routing",
+        category="audit",
+        message="Routing settings updated",
+        data={
+            "routing_strategy": request.routing_strategy,
+            "frontier_default_entry_count": len(request.frontier_default_entries),
+            "env_file": str(env_file),
+        },
+        audit=True,
+    )
+    return {
+        "saved": True,
+        "env_file": str(env_file),
+        "routing_strategy": request.routing_strategy,
+        "frontier_default_entry_count": len(request.frontier_default_entries),
+    }
+
+
+@router.get("/api/mcp/servers", dependencies=[Depends(require_api_token)])
+async def get_mcp_servers(
+    settings: Settings = Depends(get_runtime_settings),
+) -> dict[str, Any]:
+    rows = await _mcp_server_payloads(settings)
+    return {
+        "server_count": len(rows),
+        "tool_count": sum(int(item.get("tool_count", 0)) for item in rows),
+        "servers": rows,
+    }
+
+
+@router.get("/api/providers/guides", dependencies=[Depends(require_api_token)])
+def get_provider_guides(
+    settings: Settings = Depends(get_runtime_settings),
+) -> dict[str, Any]:
+    guides = _provider_guides(settings)
+    return {
+        "provider_count": len(guides),
+        "providers": guides,
+    }
+
+
+@router.get("/api/pricing/catalog", dependencies=[Depends(require_api_token)])
+def get_pricing_catalog() -> dict[str, Any]:
+    rows = pricing_catalog()
+    return {"count": len(rows), "items": rows}
+
+
+@router.get("/api/observability", dependencies=[Depends(require_api_token)])
+def get_observability_settings(
+    settings: Settings = Depends(get_runtime_settings),
+) -> dict[str, Any]:
+    return _observability_payload(settings)
+
+
+@router.get("/api/prompts", dependencies=[Depends(require_api_token)])
+def get_prompt_templates(
+    session: Session = Depends(get_session),
+) -> list[dict[str, Any]]:
+    return [prompt_template_payload(item) for item in list_prompt_templates(session)]
+
+
+@router.post("/api/prompts", dependencies=[Depends(require_operator_token)], status_code=status.HTTP_201_CREATED)
+def create_prompt_template_api(
+    request: PromptTemplateAdminCreateRequest,
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    record = create_prompt_template(
+        session,
+        PromptTemplateCreateInput(
+            name=request.name,
+            template_text=request.template_text,
+            description=request.description,
+            variables=request.variables,
+            model_override=request.model_override,
+            metadata=request.metadata,
+        ),
+    )
+    return prompt_template_payload(record)
+
+
+@router.get("/api/prompts/{name}", dependencies=[Depends(require_api_token)])
+def get_prompt_template_api(
+    name: str,
+    version: int | None = Query(default=None),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    record = get_prompt_template(session, name=name, version=version)
+    if record is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Prompt template not found.")
+    return prompt_template_payload(record)
+
+
+@router.post("/api/prompts/{name}/render", dependencies=[Depends(require_api_token)])
+def render_prompt_template_api(
+    name: str,
+    request: PromptTemplateAdminRenderRequest,
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    try:
+        record, rendered = render_prompt_template(
+            session,
+            name=name,
+            version=request.version,
+            variables=request.variables,
+        )
+    except PromptTemplateError as exc:
+        status_code = status.HTTP_404_NOT_FOUND if "not found" in str(exc).lower() else status.HTTP_400_BAD_REQUEST
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    payload = prompt_template_payload(record)
+    payload["rendered_text"] = rendered
+    payload["render_variables"] = request.variables
+    return payload
+
+
+@router.get("/api/prompts/{name}/diff", dependencies=[Depends(require_api_token)])
+def diff_prompt_template_api(
+    name: str,
+    from_version: int,
+    to_version: int,
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    try:
+        return diff_prompt_templates(session, name=name, from_version=from_version, to_version=to_version)
+    except PromptTemplateError as exc:
+        status_code = status.HTTP_404_NOT_FOUND if "not found" in str(exc).lower() else status.HTTP_400_BAD_REQUEST
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+
+
+@router.post("/api/mcp/servers/{server_name}/validate", dependencies=[Depends(require_operator_token)])
+async def validate_mcp_server(
+    server_name: str,
+    settings: Settings = Depends(get_runtime_settings),
+) -> dict[str, Any]:
+    try:
+        return await inspect_mcp_server(settings, server_name)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"MCP server validation failed: {exc}",
+        ) from exc
+
+
 @router.get("/api/auth/virtual-keys", response_model=list[VirtualKeyView], dependencies=[Depends(require_operator_token)])
 def list_virtual_keys(
     session: Session = Depends(get_session),
 ) -> list[VirtualKeyView]:
-    rows = session.execute(select(VirtualAPIKey).order_by(VirtualAPIKey.created_at.desc())).scalars().all()
-    return [VirtualKeyView.model_validate(_virtual_key_payload(item)) for item in rows]
+    rows = list_virtual_key_records(session)
+    return [VirtualKeyView.model_validate(virtual_key_payload(item)) for item in rows]
 
 
 @router.post("/api/auth/virtual-keys", response_model=VirtualKeyCreateResponse, dependencies=[Depends(require_operator_token)])
@@ -208,22 +497,8 @@ def create_virtual_key(
     request: VirtualKeyCreateRequest,
     session: Session = Depends(get_session),
 ) -> VirtualKeyCreateResponse:
-    raw_token = f"sk-{token_urlsafe(24)}"
-    record = VirtualAPIKey(
-        id=f"vkey_{uuid4().hex}",
-        key_prefix=raw_token[:12],
-        key_hash=virtual_key_hash(raw_token),
-        display_name=request.display_name,
-        owner_id=request.owner_id,
-        role=request.role,
-        status="active",
-        models_allowed_json=request.models_allowed,
-        max_budget_usd=request.max_budget_usd,
-    )
-    session.add(record)
-    session.commit()
-    session.refresh(record)
-    payload = _virtual_key_payload(record)
+    record, raw_token = create_virtual_key_record(session, request)
+    payload = virtual_key_payload(record)
     payload["token"] = raw_token
     return VirtualKeyCreateResponse.model_validate(payload)
 
@@ -233,13 +508,8 @@ def disable_virtual_key(
     key_id: str,
     session: Session = Depends(get_session),
 ) -> VirtualKeyView:
-    record = session.get(VirtualAPIKey, key_id)
-    if record is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Virtual API key not found.")
-    record.status = "disabled"
-    session.commit()
-    session.refresh(record)
-    return VirtualKeyView.model_validate(_virtual_key_payload(record))
+    record = disable_virtual_key_record(session, key_id)
+    return VirtualKeyView.model_validate(virtual_key_payload(record))
 
 
 @router.patch("/api/auth/virtual-keys/{key_id}", response_model=VirtualKeyView, dependencies=[Depends(require_operator_token)])
@@ -248,24 +518,8 @@ def update_virtual_key(
     request: VirtualKeyUpdateRequest,
     session: Session = Depends(get_session),
 ) -> VirtualKeyView:
-    record = session.get(VirtualAPIKey, key_id)
-    if record is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Virtual API key not found.")
-    if request.display_name is not None:
-        record.display_name = request.display_name
-    if request.owner_id is not None:
-        record.owner_id = request.owner_id
-    if request.role is not None:
-        record.role = request.role
-    if request.models_allowed is not None:
-        record.models_allowed_json = request.models_allowed
-    if request.max_budget_usd is not None:
-        record.max_budget_usd = request.max_budget_usd
-    if request.status is not None:
-        record.status = request.status
-    session.commit()
-    session.refresh(record)
-    return VirtualKeyView.model_validate(_virtual_key_payload(record))
+    record = update_virtual_key_record(session, key_id, request)
+    return VirtualKeyView.model_validate(virtual_key_payload(record))
 
 
 @router.post("/api/auth/virtual-keys/{key_id}/rotate", response_model=VirtualKeyRotateResponse, dependencies=[Depends(require_operator_token)])
@@ -273,16 +527,8 @@ def rotate_virtual_key(
     key_id: str,
     session: Session = Depends(get_session),
 ) -> VirtualKeyRotateResponse:
-    record = session.get(VirtualAPIKey, key_id)
-    if record is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Virtual API key not found.")
-    previous_key_prefix = str(record.key_prefix)
-    raw_token = f"sk-{token_urlsafe(24)}"
-    record.key_prefix = raw_token[:12]
-    record.key_hash = virtual_key_hash(raw_token)
-    session.commit()
-    session.refresh(record)
-    payload = _virtual_key_payload(record)
+    record, raw_token, previous_key_prefix = rotate_virtual_key_record(session, key_id)
+    payload = virtual_key_payload(record)
     payload["token"] = raw_token
     payload["previous_key_prefix"] = previous_key_prefix
     return VirtualKeyRotateResponse.model_validate(payload)
@@ -317,6 +563,7 @@ def validate_config(
         "models_path_exists": Path(settings.llmproxy_models_path).exists(),
         "logs_path_exists": Path(settings.llmproxy_logs_path).exists(),
         "provider_configuration": settings_payload(settings)["provider_configuration"],
+        "provider_guides": _provider_guides(settings),
     }
 
 
@@ -358,6 +605,29 @@ def get_operations_logs(
         level=level,
         component=component,
         category=category,
+    )
+
+
+@router.get("/api/ops/logs/export", dependencies=[Depends(require_api_token)])
+def export_operations_logs(
+    limit: int = Query(default=500, le=5000),
+    level: str | None = None,
+    component: str | None = None,
+    category: str | None = None,
+    settings: Settings = Depends(get_runtime_settings),
+) -> PlainTextResponse:
+    rows = tail_log_records(
+        settings,
+        limit=limit,
+        level=level,
+        component=component,
+        category=category,
+    )
+    payload = "\n".join(json.dumps(item, sort_keys=True) for item in rows)
+    return PlainTextResponse(
+        content=payload + ("\n" if payload else ""),
+        media_type="application/x-ndjson",
+        headers={"Content-Disposition": 'attachment; filename="llmproxy-logs.ndjson"'},
     )
 
 
@@ -487,6 +757,82 @@ async def validate_streaming_provider(
             audit=True,
         )
         return result
+
+
+@router.post("/api/providers/validate", dependencies=[Depends(require_operator_token)])
+async def validate_provider_runtime(
+    request: ProviderValidationRequest,
+    settings: Settings = Depends(get_runtime_settings),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    provider_registry = get_provider_registry(settings, session=session)
+    provider = provider_registry.get(request.provider_key)
+    if provider is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Provider '{request.provider_key}' is not registered.",
+        )
+    chat_request = ChatCompletionRequest.model_validate(
+        {
+            "model": getattr(provider, "model_id", "proxy-auto"),
+            "messages": [{"role": "user", "content": request.prompt}],
+        }
+    )
+    try:
+        result = await provider.invoke(chat_request)
+        return {
+            "success": True,
+            "provider_key": request.provider_key,
+            "provider_family": getattr(provider, "provider_family", request.provider_key),
+            "model": getattr(provider, "model_id", None),
+            "result": result,
+        }
+    except Exception as exc:
+        return {
+            "success": False,
+            "provider_key": request.provider_key,
+            "provider_family": getattr(provider, "provider_family", request.provider_key),
+            "model": getattr(provider, "model_id", None),
+            "error": str(exc),
+        }
+
+
+@router.post("/api/replicate/predictions", dependencies=[Depends(require_operator_token)])
+def enqueue_replicate_prediction(
+    request: ReplicatePredictionRequest,
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    job = enqueue_replicate_prediction_job(
+        session,
+        model=request.model,
+        input_payload=request.input,
+        wait_for_completion=request.wait_for_completion,
+    )
+    session.commit()
+    return {
+        "queued": True,
+        "job_id": job.id,
+        "job_type": job.job_type,
+        "model": request.model,
+        "wait_for_completion": request.wait_for_completion,
+    }
+
+
+@router.post("/api/replicate/predictions/validate", dependencies=[Depends(require_operator_token)])
+async def validate_replicate_prediction(
+    request: ReplicatePredictionRequest,
+    settings: Settings = Depends(get_runtime_settings),
+) -> dict[str, Any]:
+    result = await run_replicate_prediction(
+        settings=settings,
+        model=request.model,
+        input_payload=request.input,
+        wait_for_completion=request.wait_for_completion,
+    )
+    return {
+        "model": request.model,
+        "result": result,
+    }
 
 
 @router.get("/api/proxy/requests", dependencies=[Depends(require_api_token)])

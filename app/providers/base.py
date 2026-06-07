@@ -6,6 +6,7 @@ from time import perf_counter
 
 import httpx
 
+from app.services.cost import estimate_cost_usd
 from app.schemas.chat import ChatCompletionRequest
 from app.schemas.provider import ProviderCapability
 
@@ -73,7 +74,12 @@ class BaseProvider(ABC):
             "input_tokens": prompt_tokens,
             "output_tokens": completion_tokens,
             "finish_reason": "stop",
-            "cost_estimate": round((prompt_tokens + completion_tokens) * price_per_token, 6),
+            "cost_estimate": estimate_cost_usd(
+                provider_name=self.provider_name,
+                model_id=self.model_id,
+                input_tokens=prompt_tokens,
+                output_tokens=completion_tokens,
+            ),
             "raw_response": {
                 "provider": self.provider_name,
                 "provider_family": self.provider_family,
@@ -124,6 +130,14 @@ class BaseProvider(ABC):
         dimensions: int | None = None,
     ) -> list[list[float]]:
         raise NotImplementedError(f"{self.provider_name} does not support embeddings.")
+
+    async def healthcheck(self) -> dict[str, object]:
+        return {
+            "ok": None,
+            "provider": self.provider_name,
+            "model": self.model_id,
+            "detail": "health check not implemented",
+        }
 
     async def invoke(self, request: ChatCompletionRequest) -> dict[str, object]:
         started_at = perf_counter()

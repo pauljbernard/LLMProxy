@@ -11,6 +11,7 @@ from app.proxy.candidates import capture_training_candidate
 from app.proxy.judge import judge_response
 from app.proxy.recorder import record_judge_critique, record_model_response
 from app.registry.model_registry import get_provider_registry
+from app.services.cost import estimate_cost_usd
 from app.services.observability import log_record
 from app.schemas.chat import ChatCompletionRequest, ChatCompletionResponse
 from app.schemas.ensemble import EnsembleResponse, TeacherCandidate
@@ -59,7 +60,12 @@ async def run_teacher_ensemble(
                 "output_tokens": completion_tokens or len(aggregated_content.split()),
                 "latency_ms": int((perf_counter() - started_at) * 1000),
                 "finish_reason": finish_reason,
-                "cost_estimate": round((prompt_tokens + completion_tokens) * getattr(provider, "price_per_token", 0.0), 6),
+                "cost_estimate": estimate_cost_usd(
+                    provider_name=provider.provider_name,
+                    model_id=provider.model_id,
+                    input_tokens=prompt_tokens,
+                    output_tokens=completion_tokens or len(aggregated_content.split()),
+                ),
                 "raw_response": {"streamed": True, "chunk_count": chunk_count, "ensemble": True},
                 "provider": provider.provider_name,
                 "provider_family": provider.provider_family,
