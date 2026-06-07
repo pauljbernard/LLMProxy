@@ -3,10 +3,12 @@ const state = {
   activePanel: "overview",
   opsPollTimer: null,
   loadedPanels: new Set(),
+  lastRoutePreview: null,
 };
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
+const knownPanels = new Set(["overview", "proxy", "governance", "models", "integrations", "prompts", "data", "training", "operations", "runtime"]);
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -134,6 +136,13 @@ function renderOutput(selector, payload) {
   $(selector).textContent = JSON.stringify(payload, null, 2);
 }
 
+function clearHost(selector) {
+  const host = $(selector);
+  if (host) {
+    host.innerHTML = "";
+  }
+}
+
 function renderMetricGrid(selector, items) {
   const host = $(selector);
   if (!host) return;
@@ -200,11 +209,271 @@ function renderKeyValueTable(selector, rows, { emptyMessage = "No values availab
   );
 }
 
+function renderSimpleTable(selector, title, columns, rows, rowRenderer, emptyMessage) {
+  const host = $(selector);
+  if (!host) return;
+  host.innerHTML = "";
+  if (title) {
+    const heading = document.createElement("h4");
+    heading.textContent = title;
+    host.appendChild(heading);
+  }
+  host.appendChild(makeTable(columns, rows, rowRenderer, emptyMessage));
+}
+
+function formattedValue(value) {
+  if (value == null || value === "") return "-";
+  if (Array.isArray(value)) return value.join(", ") || "-";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function renderRequestDetail(payload) {
+  const request = payload?.request || {};
+  renderMetricGrid("#request-detail-summary-grid", [
+    { label: "Request", value: request.id || "-" },
+    { label: "Domain", value: request.domain || "-", subvalue: request.task_type || "No task type" },
+    { label: "Model", value: request.requested_model || "-" },
+    { label: "Success", value: request.successful ? "Yes" : "No" },
+    { label: "Candidates", value: String((payload?.training_candidates || []).length) },
+    { label: "Responses", value: String((payload?.model_responses || []).length) },
+  ]);
+  renderKeyValueTable("#request-detail-summary-table", [
+    { key: "Session", value: formattedValue(request.session_id) },
+    { key: "Route Type", value: formattedValue(request.route_type) },
+    { key: "Quality Score", value: formattedValue(request.quality_score) },
+    { key: "Cost Estimate", value: formattedValue(request.cost_estimate) },
+    { key: "Created", value: formattedValue(request.created_at) },
+  ]);
+  renderSimpleTable(
+    "#request-routing-table",
+    "Routing Decisions",
+    ["Provider", "Model", "Mode", "Latency", "Why"],
+    payload?.routing_decisions || [],
+    (row) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td><strong>${escapeHtml(row.selected_provider || "-")}</strong></td>
+        <td>${escapeHtml(row.selected_model || "-")}</td>
+        <td>${escapeHtml(row.selected_mode || "-")}</td>
+        <td>${escapeHtml(formattedValue(row.predicted_latency_class))}</td>
+        <td>${escapeHtml(row.decision_rationale || "-")}</td>
+      `;
+      return tr;
+    },
+    "No routing decisions recorded for this request.",
+  );
+  renderSimpleTable(
+    "#request-responses-table",
+    "Model Responses",
+    ["Model", "Success", "Latency", "Cost", "Created"],
+    payload?.model_responses || [],
+    (row) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td><strong>${escapeHtml(row.model || "-")}</strong></td>
+        <td>${boolBadge(!row.finish_reason || row.finish_reason !== "error")}</td>
+        <td>${escapeHtml(formattedValue(row.latency_ms))}</td>
+        <td>${escapeHtml(formattedValue(row.cost_estimate))}</td>
+        <td>${escapeHtml(formattedValue(row.created_at))}</td>
+      `;
+      return tr;
+    },
+    "No model responses recorded for this request.",
+  );
+  renderSimpleTable(
+    "#request-candidates-table",
+    "Training Candidates",
+    ["Candidate", "Domain", "Task", "Quality", "Eligible"],
+    payload?.training_candidates || [],
+    (row) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td><strong>${escapeHtml(row.id || "-")}</strong></td>
+        <td>${escapeHtml(row.domain || "-")}</td>
+        <td>${escapeHtml(row.task_type || "-")}</td>
+        <td>${escapeHtml(formattedValue(row.quality_score))}</td>
+        <td>${boolBadge(Boolean(row.export_eligible))}</td>
+      `;
+      return tr;
+    },
+    "No training candidates were created from this request.",
+  );
+  renderSimpleTable(
+    "#request-performance-table",
+    "Performance Samples",
+    ["Model", "Domain", "Score", "Cost", "Created"],
+    payload?.performance_samples || [],
+    (row) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td><strong>${escapeHtml(row.model_alias || "-")}</strong></td>
+        <td>${escapeHtml(row.domain || "-")}</td>
+        <td>${escapeHtml(formattedValue(row.quality_score))}</td>
+        <td>${escapeHtml(formattedValue(row.cost_estimate))}</td>
+        <td>${escapeHtml(formattedValue(row.created_at))}</td>
+      `;
+      return tr;
+    },
+    "No performance samples were recorded for this request.",
+  );
+  renderSimpleTable(
+    "#request-judge-table",
+    "Judge Critiques",
+    ["Judge", "Selected Model", "Selected Provider", "Created"],
+    payload?.judge_critiques || [],
+    (row) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td><strong>${escapeHtml(row.judge_model || "-")}</strong></td>
+        <td>${escapeHtml(row.selected_model || "-")}</td>
+        <td>${escapeHtml(row.selected_provider || "-")}</td>
+        <td>${escapeHtml(formattedValue(row.created_at))}</td>
+      `;
+      return tr;
+    },
+    "No judge critiques were recorded for this request.",
+  );
+}
+
+function renderTrainingDetail(payload) {
+  renderMetricGrid("#training-detail-summary-grid", [
+    { label: "Run", value: payload?.id || "-" },
+    { label: "Status", badge: statusBadge(payload?.status || "-") },
+    { label: "Mode", value: payload?.training_mode || "-" },
+    { label: "Base Model", value: payload?.base_model || "-" },
+    { label: "Started", value: formattedValue(payload?.started_at) },
+    { label: "Completed", value: formattedValue(payload?.completed_at) },
+  ]);
+  renderKeyValueTable("#training-detail-summary-table", [
+    { key: "Dataset Version", value: formattedValue(payload?.dataset_version_id) },
+    { key: "Artifact Path", value: formattedValue(payload?.artifact_path) },
+    { key: "Status", value: formattedValue(payload?.status) },
+  ]);
+  renderKeyValueTable(
+    "#training-config-table",
+    Object.entries(payload?.training_config_json || {}).map(([key, value]) => ({ key: humanizeLabel(key), value: formattedValue(value) })),
+    { emptyMessage: "No training configuration recorded." },
+  );
+  renderKeyValueTable(
+    "#training-metrics-table",
+    Object.entries(payload?.metrics_json || {}).map(([key, value]) => ({ key: humanizeLabel(key), value: formattedValue(value) })),
+    { emptyMessage: "No training metrics recorded yet." },
+  );
+}
+
+function renderEvaluationDetail(payload) {
+  renderMetricGrid("#evaluation-detail-summary-grid", [
+    { label: "Evaluation", value: payload?.id || "-" },
+    { label: "Status", badge: statusBadge(payload?.status || "-") },
+    { label: "Promotion", badge: statusBadge(payload?.promotion_status || "-") },
+    { label: "Domain", value: payload?.domain || "-" },
+    { label: "Overall", value: formattedValue(payload?.overall_score) },
+    { label: "Value Gain", value: formattedValue(payload?.value_per_dollar_gain_vs_frontier) },
+  ]);
+  renderKeyValueTable("#evaluation-detail-summary-table", [
+    { key: "Training Run", value: formattedValue(payload?.training_run_id) },
+    { key: "Frontier Baseline", value: formattedValue(payload?.frontier_baseline_name) },
+    { key: "Quality Delta", value: formattedValue(payload?.quality_delta_vs_frontier) },
+    { key: "Created", value: formattedValue(payload?.created_at) },
+  ]);
+  renderKeyValueTable(
+    "#evaluation-result-table",
+    Object.entries(payload?.result_json || {}).map(([key, value]) => ({ key: humanizeLabel(key), value: formattedValue(value) })),
+    { emptyMessage: "No evaluation result payload recorded." },
+  );
+}
+
+function renderJobDetail(payload) {
+  renderMetricGrid("#job-detail-summary-grid", [
+    { label: "Job", value: payload?.id || "-" },
+    { label: "Status", badge: statusBadge(payload?.status || "-") },
+    { label: "Type", value: payload?.job_type || "-" },
+    { label: "Attempts", value: `${payload?.attempts ?? 0}/${payload?.max_attempts ?? 0}` },
+    { label: "Available", value: formattedValue(payload?.available_at) },
+    { label: "Completed", value: formattedValue(payload?.completed_at) },
+  ]);
+  renderKeyValueTable("#job-detail-summary-table", [
+    { key: "Claimed At", value: formattedValue(payload?.claimed_at) },
+    { key: "Created At", value: formattedValue(payload?.created_at) },
+    { key: "Last Error", value: formattedValue(payload?.last_error) },
+  ]);
+  renderKeyValueTable(
+    "#job-payload-table",
+    Object.entries(payload?.payload || {}).map(([key, value]) => ({ key: humanizeLabel(key), value: formattedValue(value) })),
+    { emptyMessage: "No job payload recorded." },
+  );
+}
+
+function renderEventDetail(payload) {
+  renderMetricGrid("#event-detail-summary-grid", [
+    { label: "Event", value: payload?.id || "-" },
+    { label: "Type", value: payload?.event_type || "-" },
+    { label: "Source", value: payload?.source || "-" },
+    { label: "Processed", value: payload?.processed_at ? "Yes" : "No" },
+    { label: "Occurred", value: formattedValue(payload?.occurred_at) },
+    { label: "Processed At", value: formattedValue(payload?.processed_at) },
+  ]);
+  renderKeyValueTable("#event-detail-summary-table", [
+    { key: "Event Id", value: formattedValue(payload?.event_id) },
+    { key: "Type", value: formattedValue(payload?.event_type) },
+    { key: "Source", value: formattedValue(payload?.source) },
+  ]);
+  renderKeyValueTable(
+    "#event-payload-table",
+    Object.entries(payload?.payload_json || {}).map(([key, value]) => ({ key: humanizeLabel(key), value: formattedValue(value) })),
+    { emptyMessage: "No event payload recorded." },
+  );
+}
+
+function renderOpsRecordDetail(payload) {
+  renderMetricGrid("#ops-detail-summary-grid", [
+    { label: "Component", value: payload?.component || "-" },
+    { label: "Level", badge: statusBadge(payload?.level || "info") },
+    { label: "Category", value: payload?.category || "-" },
+    { label: "Timestamp", value: formattedValue(payload?.timestamp) },
+  ]);
+  renderKeyValueTable("#ops-detail-summary-table", [
+    { key: "Message", value: formattedValue(payload?.message) },
+    { key: "Component", value: formattedValue(payload?.component) },
+    { key: "Level", value: formattedValue(payload?.level) },
+    { key: "Timestamp", value: formattedValue(payload?.timestamp) },
+  ]);
+  renderOutput("#ops-detail-output", payload);
+}
+
+function renderRouteComparison(actualDetail) {
+  const preview = state.lastRoutePreview;
+  if (!preview || !actualDetail) {
+    clearHost("#route-comparison-table");
+    return;
+  }
+  const actualDecision = actualDetail?.routing_decisions?.[0] || {};
+  renderKeyValueTable("#route-comparison-table", [
+    { key: "Preview vs Actual Provider", value: `${formattedValue(preview.selected_provider)} -> ${formattedValue(actualDecision.selected_provider)}` },
+    { key: "Preview vs Actual Model", value: `${formattedValue(preview.decision?.selected_model)} -> ${formattedValue(actualDecision.selected_model)}` },
+    { key: "Preview vs Actual Mode", value: `${formattedValue(preview.decision?.selected_mode)} -> ${formattedValue(actualDecision.selected_mode)}` },
+    { key: "Preview Domain", value: formattedValue(preview.classification?.domain) },
+    { key: "Actual Request Id", value: formattedValue(actualDetail?.request?.id) },
+  ], { emptyMessage: "No route comparison available yet." });
+}
+
 function showDetailCard(cardSelector, outputSelector, payload) {
   const card = $(cardSelector);
   if (card) {
     card.classList.remove("hidden");
     card.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+  if (cardSelector === "#request-detail-card") {
+    renderRequestDetail(payload);
+  } else if (cardSelector === "#training-detail-card") {
+    renderTrainingDetail(payload);
+  } else if (cardSelector === "#evaluation-detail-card") {
+    renderEvaluationDetail(payload);
+  } else if (cardSelector === "#job-detail-card") {
+    renderJobDetail(payload);
+  } else if (cardSelector === "#event-detail-card") {
+    renderEventDetail(payload);
   }
   renderOutput(outputSelector, payload);
 }
@@ -432,14 +701,35 @@ function toQueryString(formSelector) {
   return params.toString();
 }
 
-function switchPanel(panel) {
-  state.activePanel = panel;
-  $$(".panel").forEach((node) => node.classList.toggle("active", node.dataset.panel === panel));
-  $$(".nav-link").forEach((node) => node.classList.toggle("active", node.dataset.panel === panel));
+function normalizedPanel(panel) {
+  return knownPanels.has(panel) ? panel : "overview";
+}
+
+function panelFromHash() {
+  return normalizedPanel(window.location.hash.replace(/^#/, "").trim());
+}
+
+function switchPanel(panel, { updateHash = true } = {}) {
+  const nextPanel = normalizedPanel(panel);
+  state.activePanel = nextPanel;
+  $$(".panel").forEach((node) => {
+    const isActive = node.dataset.panel === nextPanel;
+    node.classList.toggle("active", isActive);
+    node.setAttribute("aria-hidden", isActive ? "false" : "true");
+  });
+  $$(".nav-link").forEach((node) => {
+    const isActive = node.dataset.panel === nextPanel;
+    node.classList.toggle("active", isActive);
+    node.setAttribute("aria-selected", isActive ? "true" : "false");
+    node.tabIndex = isActive ? 0 : -1;
+  });
+  if (updateHash && window.location.hash !== `#${nextPanel}`) {
+    window.location.hash = nextPanel;
+  }
   if (state.token) {
-    ensurePanelLoaded(panel).catch((error) => {
-      showToast(`Failed to load ${panel}: ${String(error)}`, "err");
-      logConsole(`${panel} load failed`, String(error));
+    ensurePanelLoaded(nextPanel).catch((error) => {
+      showToast(`Failed to load ${nextPanel}: ${String(error)}`, "err");
+      logConsole(`${nextPanel} load failed`, String(error));
     });
   }
 }
@@ -462,13 +752,22 @@ function enhanceFormLabels() {
 
 const panelLoaders = {
   overview: async () => {
-    await Promise.all([refreshHealth(), refreshConfig(), refreshMcpServers(), refreshProviderGuides()]);
+    await Promise.all([refreshHealth(), refreshConfig()]);
   },
   proxy: async () => {
     await Promise.all([refreshRequests(), refreshStreamingSupport()]);
   },
+  governance: async () => {
+    await Promise.all([refreshVirtualKeys(), refreshPricingCatalog(), refreshGuardrails()]);
+  },
   models: async () => {
-    await Promise.all([refreshModels(), refreshLocalModels(), refreshPolicies(), refreshPrompts()]);
+    await Promise.all([refreshModels(), refreshLocalModels(), refreshPolicies()]);
+  },
+  integrations: async () => {
+    await Promise.all([refreshProviderGuides(), refreshMcpServers()]);
+  },
+  prompts: async () => {
+    await refreshPrompts();
   },
   data: async () => {
     await refreshDatasetPipeline();
@@ -477,7 +776,10 @@ const panelLoaders = {
     await Promise.all([refreshTrainingRuns(), refreshEvaluations(), refreshKpis()]);
   },
   operations: async () => {
-    await Promise.all([refreshOperationsSummary(), refreshOperationsLive(), refreshJobs(), refreshEvents(), refreshObservability()]);
+    await Promise.all([refreshOperationsSummary(), refreshOperationsLive(), refreshObservability()]);
+  },
+  runtime: async () => {
+    await Promise.all([refreshJobs(), refreshEvents()]);
   },
 };
 
@@ -577,6 +879,38 @@ async function refreshProviderGuides() {
   return payload;
 }
 
+function renderRoutePreview(payload) {
+  state.lastRoutePreview = payload;
+  const decision = payload?.decision || {};
+  const classification = payload?.classification || {};
+  renderMetricGrid("#route-preview-grid", [
+    { label: "Provider", value: payload?.selected_provider || "-" },
+    { label: "Model", value: decision.selected_model || "-" },
+    { label: "Mode", value: decision.selected_mode || "-" },
+    { label: "Domain", value: classification.domain || "-", subvalue: classification.task_type || "No task type" },
+    { label: "Latency Class", value: decision.predicted_latency_class || "-" },
+    { label: "Cost Class", value: decision.predicted_cost_class || "-" },
+  ]);
+  renderKeyValueTable("#route-preview-table", [
+    { key: "Policy Version", value: formattedValue(decision.policy_version) },
+    { key: "Provider Family", value: formattedValue(decision.selected_provider_family) },
+    { key: "Decision Rationale", value: formattedValue(decision.decision_rationale) },
+    { key: "Shadows", value: formattedValue(payload?.shadow_provider_keys || []) },
+    { key: "Fallback Chain", value: formattedValue((decision.fallback_chain || []).map((item) => `${item.order}:${item.provider}/${item.model}`)) },
+    { key: "Route Tags", value: formattedValue(classification.route_tags || []) },
+    { key: "Region", value: formattedValue(classification.region) },
+  ], { emptyMessage: "Route preview will appear here once generated." });
+  clearHost("#route-comparison-table");
+  renderOutput("#route-preview-output", payload);
+}
+
+async function fetchLatestRequestDetailBySession(sessionId) {
+  if (!sessionId) return null;
+  const rows = await apiFetch(`/admin/api/proxy/requests?session_id=${encodeURIComponent(sessionId)}`);
+  if (!Array.isArray(rows) || !rows.length) return null;
+  return apiFetch(`/admin/api/proxy/requests/${encodeURIComponent(rows[0].id)}`);
+}
+
 async function refreshPrompts() {
   const payload = await apiFetch("/admin/api/prompts");
   const host = $("#prompts-table");
@@ -617,6 +951,122 @@ async function refreshPrompts() {
       return tr;
     }, "No prompt templates registered yet."),
   );
+  return payload;
+}
+
+function formatVirtualKeyLimits(row) {
+  const parts = [];
+  if (row.rpm_limit != null) parts.push(`RPM ${row.rpm_limit}`);
+  if (row.tpm_limit != null) parts.push(`TPM ${row.tpm_limit}`);
+  if (row.max_budget_usd != null) parts.push(`$${Number(row.max_budget_usd).toFixed(2)}`);
+  return parts.join(" / ") || "-";
+}
+
+function populateVirtualKeyForm(row = {}) {
+  setFieldValue("#virtual-key-form", "key_id", row.id || "");
+  setFieldValue("#virtual-key-form", "display_name", row.display_name || "");
+  setFieldValue("#virtual-key-form", "owner_id", row.owner_id || "");
+  setFieldValue("#virtual-key-form", "role", row.role || "api");
+  setFieldValue("#virtual-key-form", "models_allowed", (row.models_allowed || []).join(","));
+  setFieldValue("#virtual-key-form", "rpm_limit", row.rpm_limit ?? "");
+  setFieldValue("#virtual-key-form", "tpm_limit", row.tpm_limit ?? "");
+  setFieldValue("#virtual-key-form", "max_budget_usd", row.max_budget_usd ?? "");
+  setFieldValue("#virtual-key-form", "budget_reset_period", row.budget_reset_period || "");
+  setFieldValue("#virtual-key-form", "budget_reset_at", row.budget_reset_at || "");
+  setFieldValue("#virtual-key-form", "status", row.status || "active");
+}
+
+async function refreshVirtualKeys() {
+  const payload = await apiFetch("/admin/api/auth/virtual-keys");
+  renderMetricGrid("#virtual-key-grid", [
+    { label: "Total Keys", value: String(payload.length) },
+    { label: "Active", value: String(payload.filter((item) => item.status === "active").length) },
+    { label: "Budgeted", value: String(payload.filter((item) => item.max_budget_usd != null).length) },
+    { label: "Rate Limited", value: String(payload.filter((item) => item.rpm_limit != null || item.tpm_limit != null).length) },
+  ]);
+  const host = $("#virtual-keys-table");
+  host.innerHTML = "";
+  host.appendChild(
+    makeTable(["Key", "Role", "Limits", "Spend", "Status", "Actions"], payload || [], (row) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td><strong>${escapeHtml(row.display_name || row.key_prefix)}</strong><br/><span>${escapeHtml(row.key_prefix)}</span></td>
+        <td>${escapeHtml(row.role || "-")}</td>
+        <td>${escapeHtml(formatVirtualKeyLimits(row))}</td>
+        <td>$${Number(row.spend_usd || 0).toFixed(4)}</td>
+        <td>${statusBadge(row.status || "pending")}</td>
+        <td></td>
+      `;
+      const actions = document.createElement("div");
+      actions.className = "table-actions";
+      actions.appendChild(createActionButton("Inspect", () => renderOutput("#virtual-keys-output", row), { accent: true }));
+      actions.appendChild(createActionButton("Edit", () => {
+        populateVirtualKeyForm(row);
+        showToast(`Loaded ${row.key_prefix} into the form.`, "info");
+      }));
+      actions.appendChild(createActionButton("Rotate", async () => {
+        const result = await apiFetch(`/admin/api/auth/virtual-keys/${encodeURIComponent(row.id)}/rotate`, { method: "POST" });
+        renderOutput("#virtual-keys-output", result);
+        renderOutput("#virtual-key-form-output", result);
+        showToast(`Rotated ${row.key_prefix}. Store the new token now.`, "warn");
+        await refreshVirtualKeys();
+      }));
+      actions.appendChild(createActionButton("Disable", async () => {
+        const result = await apiFetch(`/admin/api/auth/virtual-keys/${encodeURIComponent(row.id)}/disable`, { method: "POST" });
+        renderOutput("#virtual-keys-output", result);
+        showToast(`Disabled ${row.key_prefix}.`, "warn");
+        await refreshVirtualKeys();
+      }, { destructive: true, confirmMessage: `Disable virtual key ${row.key_prefix}? Existing callers will stop working.` }));
+      tr.lastElementChild.appendChild(actions);
+      return tr;
+    }, "Issued virtual keys will appear here."),
+  );
+  renderOutput("#virtual-keys-output", payload);
+  return payload;
+}
+
+async function refreshPricingCatalog() {
+  const payload = await apiFetch("/admin/api/pricing/catalog");
+  const rows = payload.items || [];
+  renderMetricGrid("#pricing-grid", [
+    { label: "Catalog Rows", value: String(payload.count || 0) },
+    { label: "Providers", value: String(new Set(rows.map((item) => item.provider)).size) },
+    { label: "Models With Output Pricing", value: String(rows.filter((item) => item.output_cost_per_token != null).length) },
+  ]);
+  const host = $("#pricing-table");
+  host.innerHTML = "";
+  host.appendChild(
+    makeTable(["Provider", "Model", "Input / 1K", "Output / 1K"], rows, (row) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td><strong>${escapeHtml(row.provider)}</strong></td>
+        <td>${escapeHtml(row.model)}</td>
+        <td>${escapeHtml(String(row.input_cost_per_token ?? "-"))}</td>
+        <td>${escapeHtml(String(row.output_cost_per_token ?? "-"))}</td>
+      `;
+      return tr;
+    }, "Pricing catalog rows will appear here."),
+  );
+  renderOutput("#pricing-output", payload);
+  return payload;
+}
+
+async function refreshGuardrails() {
+  const payload = await apiFetch("/admin/api/guardrails/settings");
+  renderMetricGrid("#guardrails-grid", [
+    { label: "Prompt Injection Blocking", badge: boolBadge(Boolean(payload.prompt_injection_blocking_enabled)) },
+    { label: "PII Output Masking", badge: boolBadge(Boolean(payload.pii_output_masking_enabled)) },
+    { label: "Pre Hooks", value: String((payload.pre_hooks || []).length) },
+    { label: "Post Hooks", value: String((payload.post_hooks || []).length) },
+  ]);
+  renderKeyValueTable("#guardrails-table", [
+    { key: "Prompt Injection Blocking", value: payload.prompt_injection_blocking_enabled ? "Enabled" : "Disabled" },
+    { key: "PII Output Masking", value: payload.pii_output_masking_enabled ? "Enabled" : "Disabled" },
+    { key: "Pre Hooks", value: (payload.pre_hooks || []).join(", ") || "-" },
+    { key: "Post Hooks", value: (payload.post_hooks || []).join(", ") || "-" },
+    { key: "Blocked Output Patterns", value: String((payload.blocked_output_patterns || []).length) },
+  ], { emptyMessage: "No guardrail settings available." });
+  renderOutput("#guardrails-output", payload);
   return payload;
 }
 
@@ -1147,7 +1597,7 @@ function renderLogTable(selector, rows) {
       const actions = document.createElement("div");
       actions.className = "table-actions";
       actions.appendChild(
-        createActionButton("Inspect", () => renderOutput("#ops-detail-output", row), { accent: true }),
+        createActionButton("Inspect", () => renderOpsRecordDetail(row), { accent: true }),
       );
       tr.lastElementChild.appendChild(actions);
       return tr;
@@ -1371,6 +1821,8 @@ async function initialize() {
   $$(".nav-link").forEach((button) => {
     button.addEventListener("click", () => switchPanel(button.dataset.panel));
   });
+  window.addEventListener("hashchange", () => switchPanel(panelFromHash(), { updateHash: false }));
+  switchPanel(panelFromHash(), { updateHash: false });
 
   $("#save-token").addEventListener("click", () => {
     state.token = $("#token-input").value.trim();
@@ -1493,6 +1945,31 @@ async function initialize() {
     if (mcpTools.length && submitter.dataset.mode === "chat") {
       body.tools = mcpTools;
     }
+    if (submitter.dataset.mode === "preview") {
+      try {
+        const result = await withLoading(submitter, () => apiFetch("/admin/api/proxy/route-preview", {
+          method: "POST",
+          body: JSON.stringify({
+            model: body.model,
+            temperature: body.temperature,
+            max_tokens: body.max_tokens,
+            messages: body.messages,
+            session_id: body.metadata.session_id,
+            domain_hint: body.metadata.domain_hint,
+            task_type_hint: body.metadata.task_type_hint,
+            region_hint: body.metadata.region_hint,
+            route_tags: body.metadata.route_tags,
+          }),
+        }));
+        renderRoutePreview(result);
+        logConsole("route preview", result);
+        showToast("Route preview generated.", "ok");
+      } catch (error) {
+        showToast(`Route preview failed: ${String(error)}`, "err");
+        logConsole("route preview failed", String(error));
+      }
+      return;
+    }
     const url = submitter.dataset.mode === "ensemble" ? "/proxy/ensemble" : "/v1/chat/completions";
     try {
       const result = await withLoading(submitter, async () => (
@@ -1504,6 +1981,10 @@ async function initialize() {
       logConsole(`proxy ${submitter.dataset.mode}`, result);
       showToast(`${submitter.dataset.mode === "ensemble" ? "Ensemble" : "Chat"} request completed.`, "ok");
       await refreshRequests();
+      const actualDetail = await fetchLatestRequestDetailBySession(body.metadata.session_id);
+      if (actualDetail) {
+        renderRouteComparison(actualDetail);
+      }
     } catch (error) {
       showToast(`Proxy request failed: ${String(error)}`, "err");
       logConsole(`proxy ${submitter.dataset.mode} failed`, String(error));
@@ -1556,7 +2037,23 @@ async function initialize() {
       logConsole("provider guides refresh failed", String(error));
     }
   });
+  $("#refresh-provider-guides-secondary")?.addEventListener("click", async (event) => {
+    try {
+      await withLoading(event.currentTarget, () => refreshProviderGuides());
+    } catch (error) {
+      showToast(`Provider guide refresh failed: ${String(error)}`, "err");
+      logConsole("provider guides refresh failed", String(error));
+    }
+  });
   $("#refresh-mcp-servers").addEventListener("click", async (event) => {
+    try {
+      await withLoading(event.currentTarget, () => refreshMcpServers());
+    } catch (error) {
+      showToast(`MCP server refresh failed: ${String(error)}`, "err");
+      logConsole("mcp server refresh failed", String(error));
+    }
+  });
+  $("#refresh-mcp-servers-secondary")?.addEventListener("click", async (event) => {
     try {
       await withLoading(event.currentTarget, () => refreshMcpServers());
     } catch (error) {
@@ -1584,10 +2081,80 @@ async function initialize() {
     }
   });
 
+  $("#refresh-virtual-keys")?.addEventListener("click", async (event) => {
+    try {
+      await withLoading(event.currentTarget, () => refreshVirtualKeys());
+    } catch (error) {
+      showToast(`Virtual key refresh failed: ${String(error)}`, "err");
+      logConsole("virtual key refresh failed", String(error));
+    }
+  });
+  $("#refresh-pricing")?.addEventListener("click", async (event) => {
+    try {
+      await withLoading(event.currentTarget, () => refreshPricingCatalog());
+    } catch (error) {
+      showToast(`Pricing refresh failed: ${String(error)}`, "err");
+      logConsole("pricing refresh failed", String(error));
+    }
+  });
+  $("#refresh-guardrails")?.addEventListener("click", async (event) => {
+    try {
+      await withLoading(event.currentTarget, () => refreshGuardrails());
+    } catch (error) {
+      showToast(`Guardrail refresh failed: ${String(error)}`, "err");
+      logConsole("guardrail refresh failed", String(error));
+    }
+  });
+  $("#virtual-key-form-reset")?.addEventListener("click", () => {
+    $("#virtual-key-form")?.reset();
+    populateVirtualKeyForm();
+  });
+  $("#virtual-key-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const keyId = String(data.get("key_id") || "").trim();
+    const body = {
+      display_name: String(data.get("display_name") || "").trim() || null,
+      owner_id: String(data.get("owner_id") || "").trim() || null,
+      role: String(data.get("role") || "api").trim() || "api",
+      models_allowed: csv(String(data.get("models_allowed") || "")),
+      rpm_limit: String(data.get("rpm_limit") || "").trim() ? Number(data.get("rpm_limit")) : null,
+      tpm_limit: String(data.get("tpm_limit") || "").trim() ? Number(data.get("tpm_limit")) : null,
+      max_budget_usd: String(data.get("max_budget_usd") || "").trim() ? Number(data.get("max_budget_usd")) : null,
+      budget_reset_period: String(data.get("budget_reset_period") || "").trim() || null,
+      budget_reset_at: String(data.get("budget_reset_at") || "").trim() || null,
+      status: String(data.get("status") || "").trim() || null,
+    };
+    const method = keyId ? "PATCH" : "POST";
+    const url = keyId ? `/admin/api/auth/virtual-keys/${encodeURIComponent(keyId)}` : "/admin/api/auth/virtual-keys";
+    const payload = keyId ? body : Object.fromEntries(Object.entries(body).filter(([key]) => key !== "status"));
+    try {
+      const result = await withLoading(event.submitter, () => apiFetch(url, { method, body: JSON.stringify(payload) }));
+      renderOutput("#virtual-key-form-output", result);
+      showToast(keyId ? "Virtual key updated." : "Virtual key issued.", "ok");
+      if (!keyId && result.token) {
+        showToast("Store the new virtual key token now.", "warn");
+      }
+      populateVirtualKeyForm();
+      await refreshVirtualKeys();
+    } catch (error) {
+      showToast(`Virtual key save failed: ${String(error)}`, "err");
+      logConsole("virtual key save failed", String(error));
+    }
+  });
+
   $("#refresh-models").addEventListener("click", async (event) => { try { await withLoading(event.currentTarget, () => refreshModels()); } catch (error) { showToast(`Models refresh failed: ${String(error)}`, "err"); logConsole("models refresh failed", String(error)); } });
   $("#refresh-local-models").addEventListener("click", async (event) => { try { await withLoading(event.currentTarget, () => refreshLocalModels()); } catch (error) { showToast(`Local model refresh failed: ${String(error)}`, "err"); logConsole("local models refresh failed", String(error)); } });
   $("#refresh-policies").addEventListener("click", async (event) => { try { await withLoading(event.currentTarget, () => refreshPolicies()); } catch (error) { showToast(`Policy refresh failed: ${String(error)}`, "err"); logConsole("policy refresh failed", String(error)); } });
   $("#refresh-prompts")?.addEventListener("click", async (event) => {
+    try {
+      await withLoading(event.currentTarget, () => refreshPrompts());
+    } catch (error) {
+      showToast(`Prompt refresh failed: ${String(error)}`, "err");
+      logConsole("prompt refresh failed", String(error));
+    }
+  });
+  $("#refresh-prompts-secondary")?.addEventListener("click", async (event) => {
     try {
       await withLoading(event.currentTarget, () => refreshPrompts());
     } catch (error) {

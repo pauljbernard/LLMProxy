@@ -1,6 +1,7 @@
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from decimal import Decimal
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
@@ -9,6 +10,7 @@ from app.api.dependencies import virtual_key_hash
 from app.config import Settings
 from app.db.models import VirtualAPIKey
 from app.main import app
+from app.schemas.routing import RoutingDecision
 
 
 def test_admin_console_page_serves() -> None:
@@ -18,6 +20,13 @@ def test_admin_console_page_serves() -> None:
     assert "llmProxy Operator Console" in response.text
     assert "health-status-grid" in response.text
     assert "config-table" in response.text
+    assert "virtual-keys-table" in response.text
+    assert "pricing-table" in response.text
+    assert "guardrails-table" in response.text
+    assert "Integrations" in response.text
+    assert "Prompt Library" in response.text
+    assert "panel-runtime" in response.text
+    assert "panel-integrations" in response.text
     assert "pipeline-summary" in response.text
     assert "kpi-metrics-grid" in response.text
     assert "mcp-server-grid" in response.text
@@ -34,7 +43,17 @@ def test_admin_console_page_serves() -> None:
     assert 'name="prompt_template_variables"' in response.text
     assert 'name="route_tags"' in response.text
     assert 'name="region_hint"' in response.text
+    assert "route-preview-grid" in response.text
+    assert "route-preview-table" in response.text
+    assert "route-comparison-table" in response.text
     assert "request-detail-card" in response.text
+    assert "request-detail-summary-grid" in response.text
+    assert "request-routing-table" in response.text
+    assert "training-detail-summary-grid" in response.text
+    assert "evaluation-detail-summary-grid" in response.text
+    assert "job-detail-summary-grid" in response.text
+    assert "event-detail-summary-grid" in response.text
+    assert "ops-detail-summary-grid" in response.text
     assert "job-detail-card" in response.text
     assert "event-detail-card" in response.text
 
@@ -50,9 +69,82 @@ def test_admin_static_asset_serves() -> None:
     assert "validateRoutingDefaultEntries" in response.text
     assert "refreshObservability" in response.text
     assert "refreshPrompts" in response.text
+    assert "refreshVirtualKeys" in response.text
+    assert "refreshPricingCatalog" in response.text
+    assert "refreshGuardrails" in response.text
+    assert "renderRoutePreview" in response.text
+    assert "renderRequestDetail" in response.text
+    assert "renderTrainingDetail" in response.text
+    assert "renderEvaluationDetail" in response.text
+    assert "renderJobDetail" in response.text
+    assert "renderEventDetail" in response.text
+    assert "renderOpsRecordDetail" in response.text
+    assert "renderRouteComparison" in response.text
+    assert "panelFromHash" in response.text
+    assert "refresh-prompts-secondary" in response.text
     assert "parseJsonObject" in response.text
     assert "Diff Prev" in response.text
     assert "apiStream" in response.text
+
+
+def test_admin_route_preview_endpoint(monkeypatch) -> None:
+    monkeypatch.setattr(
+        admin,
+        "classify_request",
+        lambda request: {
+            "domain": "coding",
+            "task_type": "analysis",
+            "privacy_level": "standard",
+            "complexity": "medium",
+            "route_tags": ["latency"],
+            "region": "us-east",
+        },
+    )
+    monkeypatch.setattr(
+        admin,
+        "select_route",
+        lambda request_id, request, classification, settings, session=None: SimpleNamespace(
+            provider_key="groq",
+            shadow_provider_keys=["openai"],
+            selected_entry={"provider_key": "groq", "model_id": "llama-3.3-70b-versatile"},
+            decision=RoutingDecision(
+                routing_decision_id="rd_123",
+                session_id=request.metadata.session_id,
+                request_id=request_id,
+                policy_version="policy_v1",
+                selected_provider="groq",
+                selected_provider_family="groq",
+                selected_model="llama-3.3-70b-versatile",
+                selected_mode="production",
+                ranked_alternatives=[],
+                decision_rationale="Prefer latency-optimized frontier route.",
+                predicted_cost_class="low",
+                predicted_latency_class="low",
+                fallback_chain=[],
+            ),
+        ),
+    )
+    client = TestClient(app)
+    response = client.post(
+        "/admin/api/proxy/route-preview",
+        headers={"Authorization": "Bearer change-me"},
+        json={
+            "model": "proxy-auto",
+            "temperature": 0.2,
+            "max_tokens": 256,
+            "session_id": "sess_preview",
+            "domain_hint": "coding",
+            "task_type_hint": "analysis",
+            "region_hint": "us-east",
+            "route_tags": ["latency"],
+            "messages": [{"role": "user", "content": "Review this patch."}],
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["selected_provider"] == "groq"
+    assert payload["decision"]["selected_model"] == "llama-3.3-70b-versatile"
+    assert payload["classification"]["domain"] == "coding"
 
 
 def test_admin_config_requires_auth() -> None:
@@ -120,6 +212,16 @@ def test_admin_pricing_catalog_endpoint() -> None:
     payload = response.json()
     assert payload["count"] >= 1
     assert any(item["provider"] == "openai" and item["model"] == "gpt-5.5" for item in payload["items"])
+
+
+def test_admin_guardrails_settings_endpoint() -> None:
+    client = TestClient(app)
+    response = client.get("/admin/api/guardrails/settings", headers={"Authorization": "Bearer change-me"})
+    assert response.status_code == 200
+    payload = response.json()
+    assert "prompt_injection_blocking_enabled" in payload
+    assert "pii_output_masking_enabled" in payload
+    assert "blocked_output_patterns" in payload
 
 
 def test_admin_observability_endpoint() -> None:
