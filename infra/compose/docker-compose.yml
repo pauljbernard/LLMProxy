@@ -3,12 +3,16 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile
+      target: base
     image: llmproxy:dev
     command: python3 -m app.runtime api
     env_file:
-      - .env.example
+      - path: .env.example
+        required: true
+      - path: .env.local
+        required: false
     ports:
-      - "8000:8000"
+      - "${LLMPROXY_PUBLISHED_PORT_RANGE:-8000-8010}:${LLMPROXY_PUBLISHED_PORT_RANGE:-8000-8010}"
     depends_on:
       - postgres
       - redis
@@ -29,7 +33,10 @@ services:
     image: llmproxy:dev
     command: python3 -m app.runtime worker
     env_file:
-      - .env.example
+      - path: .env.example
+        required: true
+      - path: .env.local
+        required: false
     environment:
       LLMPROXY_WORKER_EXCLUDE_JOB_TYPES: training.run
     depends_on:
@@ -44,10 +51,17 @@ services:
       - logs_data:/data/logs
 
   training-worker:
-    image: llmproxy:dev
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: training-runtime
+    image: llmproxy-training:dev
     command: python3 -m app.runtime training-worker
     env_file:
-      - .env.example
+      - path: .env.example
+        required: true
+      - path: .env.local
+        required: false
     depends_on:
       - postgres
       - redis
@@ -59,11 +73,40 @@ services:
       - reports_data:/data/reports
       - logs_data:/data/logs
 
+  unsloth-studio:
+    image: unsloth/unsloth
+    platform: linux/amd64
+    env_file:
+      - path: .env.example
+        required: true
+      - path: .env.local
+        required: false
+    ports:
+      - "8888:8000"
+      - "8889:8888"
+    depends_on:
+      - api
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000')"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - exports_data:/workspace/work/llmproxy/exports
+      - datasets_data:/workspace/work/llmproxy/datasets
+      - models_data:/workspace/work/llmproxy/models
+      - checkpoints_data:/workspace/work/llmproxy/checkpoints
+      - reports_data:/workspace/work/llmproxy/reports
+      - logs_data:/workspace/work/llmproxy/logs
+
   scheduler:
     image: llmproxy:dev
     command: python3 -m app.runtime scheduler
     env_file:
-      - .env.example
+      - path: .env.example
+        required: true
+      - path: .env.local
+        required: false
     depends_on:
       - postgres
       - redis

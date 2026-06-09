@@ -24,6 +24,7 @@ class RequestLog(Base):
     complexity: Mapped[str] = mapped_column(String, default="medium")
     privacy_level: Mapped[str] = mapped_column(String, default="standard")
     request_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    effective_request_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -39,6 +40,14 @@ class RoutingDecisionRecord(Base):
     selected_provider_family: Mapped[str] = mapped_column(String)
     selected_model: Mapped[str] = mapped_column(String)
     selected_mode: Mapped[str] = mapped_column(String)
+    selected_entry_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    selected_pool_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    selected_node_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    selected_node_role: Mapped[str | None] = mapped_column(String, nullable=True)
+    selected_node_labels_json: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    selected_capacity_class: Mapped[str | None] = mapped_column(String, nullable=True)
+    selected_balancing_strategy: Mapped[str | None] = mapped_column(String, nullable=True)
+    selected_affinity_key: Mapped[str | None] = mapped_column(String, nullable=True)
     decision_rationale: Mapped[str] = mapped_column(Text)
     predicted_cost_class: Mapped[str] = mapped_column(String)
     predicted_latency_class: Mapped[str] = mapped_column(String)
@@ -249,6 +258,7 @@ class PromptTemplate(Base):
     template_text: Mapped[str] = mapped_column(Text)
     variables_json: Mapped[list[str]] = mapped_column(JSONB, default=list)
     model_override: Mapped[str | None] = mapped_column(String, nullable=True)
+    status: Mapped[str] = mapped_column(String, default="active", server_default="active", index=True)
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import socket
 import subprocess
 import time
 from sqlalchemy import text
@@ -22,7 +23,9 @@ from app.evaluation.runner import execute_evaluation_run
 from app.schemas.dataset import DatasetImportRequest
 from app.schemas.integration import DeploymentRequest
 from app.services.observability import log_record
+from app.services.model_monitoring import enqueue_due_model_monitor_jobs, run_model_monitor
 from app.services.replicate_predictions import run_replicate_prediction
+from app.services.training_runtime import report_training_runtime_status
 from app.services.virtual_key_governance import reset_due_virtual_key_budgets
 from app.training.orchestrator import execute_training_run
 
@@ -50,11 +53,40 @@ def run_api() -> None:
     wait_for_database(settings.llmproxy_database_wait_timeout_seconds)
     if settings.llmproxy_run_migrations_on_start:
         run_migrations()
-    uvicorn.run(
-        "app.main:app",
-        host=settings.llmproxy_api_host,
-        port=settings.llmproxy_api_port,
-    )
+    listeners = settings.configured_inbound_listeners()
+    if len(listeners) == 1:
+        listener = listeners[0]
+        uvicorn.run(
+            "app.main:app",
+            host=str(listener.get("host") or settings.llmproxy_api_host),
+            port=int(listener.get("port") or settings.llmproxy_api_port),
+        )
+        return
+
+    config = uvicorn.Config("app.main:app", host=settings.llmproxy_api_host, port=settings.llmproxy_api_port)
+    server = uvicorn.Server(config)
+    sockets: list[socket.socket] = []
+    seen: set[tuple[str, int]] = set()
+    try:
+        for listener in listeners:
+            host = str(listener.get("host") or settings.llmproxy_api_host)
+            port = int(listener.get("port") or settings.llmproxy_api_port)
+            if (host, port) in seen:
+                continue
+            seen.add((host, port))
+            family = socket.AF_INET6 if ":" in host and host != "0.0.0.0" else socket.AF_INET
+            sock = socket.socket(family=family, type=socket.SOCK_STREAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind((host, port))
+            sock.listen(2048)
+            sockets.append(sock)
+        asyncio.run(server.serve(sockets=sockets))
+    finally:
+        for sock in sockets:
+            try:
+                sock.close()
+            except OSError:
+                pass
 
 
 def run_worker(
@@ -66,6 +98,8 @@ def run_worker(
     wait_for_database(settings.llmproxy_database_wait_timeout_seconds)
     while True:  # pragma: no cover - long-lived runtime role
         try:
+            if include_job_types == {"training.run"}:
+                report_training_runtime_status(settings)
             processed = run_worker_iteration(
                 include_job_types=include_job_types or settings.worker_include_job_types,
                 exclude_job_types=exclude_job_types or settings.worker_exclude_job_types,
@@ -110,6 +144,7 @@ def run_scheduler_iteration() -> None:
         reset_count = reset_due_virtual_key_budgets(session)
         result = process_pending_events(session, settings=settings)
         job = enqueue_kpi_report_job(session)
+        due_monitor_jobs = enqueue_due_model_monitor_jobs(session, settings=settings)
         session.commit()
         log_record(
             settings,
@@ -122,6 +157,7 @@ def run_scheduler_iteration() -> None:
                 "imported_count": result.imported_count,
                 "kpi_job_id": job.id,
                 "virtual_key_budget_resets": reset_count,
+                "due_model_monitor_jobs": due_monitor_jobs,
             },
         )
     finally:
@@ -201,6 +237,16 @@ def run_worker_iteration(
                     model=str(job.payload_json["model"]),
                     input_payload=dict(job.payload_json.get("input", {})),
                     wait_for_completion=bool(job.payload_json.get("wait_for_completion", True)),
+                )
+            )
+            job.payload_json = {**job.payload_json, "result": result}
+        elif job.job_type == "model.monitor":
+            result = asyncio.run(
+                run_model_monitor(
+                    session,
+                    settings=settings,
+                    monitor=dict(job.payload_json.get("monitor") or {}),
+                    operator_token=settings.llmproxy_bearer_token,
                 )
             )
             job.payload_json = {**job.payload_json, "result": result}

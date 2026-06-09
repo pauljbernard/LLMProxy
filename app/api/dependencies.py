@@ -6,7 +6,9 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from hashlib import sha256
 
-from fastapi import Depends, HTTPException, status
+from typing import Any
+
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,6 +36,51 @@ class AuthPrincipal:
 
 def get_runtime_settings() -> Settings:
     return get_settings()
+
+
+def resolve_request_listener(request: Request, settings: Settings) -> dict[str, Any]:
+    observed_host = (request.url.hostname or "").strip() or None
+    observed_port = request.url.port
+    return settings.resolve_inbound_listener(host=observed_host, port=observed_port)
+
+
+def require_admin_listener(
+    request: Request,
+    settings: Settings = Depends(get_runtime_settings),
+) -> dict[str, Any]:
+    listener = resolve_request_listener(request, settings)
+    if bool(listener.get("exposes_admin")):
+        return listener
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="This listener does not expose the admin surface.",
+    )
+
+
+def require_platform_listener(
+    request: Request,
+    settings: Settings = Depends(get_runtime_settings),
+) -> dict[str, Any]:
+    listener = resolve_request_listener(request, settings)
+    if bool(listener.get("exposes_platform_api")):
+        return listener
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="This listener does not expose the platform API surface.",
+    )
+
+
+def require_proxy_listener(
+    request: Request,
+    settings: Settings = Depends(get_runtime_settings),
+) -> dict[str, Any]:
+    listener = resolve_request_listener(request, settings)
+    if bool(listener.get("exposes_proxy")):
+        return listener
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="This listener does not expose the proxy endpoint surface.",
+    )
 
 
 def virtual_key_hash(token: str) -> str:
@@ -148,16 +195,25 @@ async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
 
 
 def require_api_token(
+    request: Request = None,
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
     settings: Settings = Depends(get_runtime_settings),
     session: Session = Depends(get_session),
 ) -> AuthPrincipal:
-    if credentials is None:
+    token = credentials.credentials if credentials is not None else None
+    if token is None and request is not None:
+        raw_authorization = (request.headers.get("authorization") or "").strip()
+        if raw_authorization and not raw_authorization.lower().startswith("bearer "):
+            token = raw_authorization
+    if token is None and request is not None:
+        raw_api_key = (request.headers.get("x-api-key") or "").strip()
+        if raw_api_key:
+            token = raw_api_key
+    if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing or invalid bearer token.",
         )
-    token = credentials.credentials
     if token in settings.operator_tokens:
         return AuthPrincipal(token=token, role="operator")
     if token in settings.automation_tokens:

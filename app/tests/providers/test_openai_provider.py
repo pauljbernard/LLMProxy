@@ -161,6 +161,55 @@ def test_openai_provider_passes_through_modern_chat_parameters() -> None:
     assert result["tool_calls"][0]["function"]["name"] == "lookup"
 
 
+def test_openai_provider_forwards_proxy_metadata_only_when_flagged() -> None:
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode("utf-8"))
+        captured["payload"] = payload
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl_meta",
+                "model": "gpt-5.5",
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3},
+            },
+        )
+
+    provider = OpenAIProvider(
+        "gpt-5.5",
+        api_key="test-openai-key",
+        base_url="https://child-node.example/v1",
+        transport=httpx.MockTransport(handler),
+    )
+    request = ChatCompletionRequest.model_validate(
+        {
+            "model": "proxy-auto",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "metadata": {
+                "session_id": "sess_provider",
+                "root_request_id": "req_root",
+                "parent_request_id": "req_parent",
+                "upstream_node_id": "edge-router-1",
+                "topology_path": ["edge-router-1"],
+                "routed_pool_id": "coding-east",
+                "routed_node_id": "child-a",
+                "forwarded_by_proxy": True,
+            },
+        }
+    )
+
+    asyncio.run(provider.invoke(request))
+
+    payload = captured["payload"]
+    assert payload["metadata"]["root_request_id"] == "req_root"
+    assert payload["metadata"]["parent_request_id"] == "req_parent"
+    assert payload["metadata"]["upstream_node_id"] == "edge-router-1"
+    assert payload["metadata"]["routed_pool_id"] == "coding-east"
+    assert payload["metadata"]["routed_node_id"] == "child-a"
+
+
 def test_openai_provider_uses_request_timeout_override(monkeypatch) -> None:
     provider = OpenAIProvider(
         "gpt-5.5",
@@ -215,6 +264,46 @@ def test_openai_provider_requires_api_key() -> None:
         asyncio.run(provider.chat(_request()))
 
 
+def test_openai_provider_lists_available_models() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/models"
+        assert request.headers["authorization"] == "Bearer test-openai-key"
+        return httpx.Response(
+            200,
+            json={
+                "object": "list",
+                "data": [
+                    {"id": "gpt-5.5", "object": "model", "owned_by": "openai"},
+                    {"id": "gpt-5.5-mini", "object": "model", "owned_by": "openai"},
+                    {"id": "text-embedding-3-small", "object": "model", "owned_by": "openai"},
+                    {"id": "omni-moderation-latest", "object": "model", "owned_by": "openai"},
+                ],
+            },
+        )
+
+    provider = OpenAIProvider(
+        "gpt-5.5",
+        api_key="test-openai-key",
+        base_url="https://api.openai.com/v1",
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = asyncio.run(provider.list_models())
+
+    by_model_id = {item.model_id: item for item in result}
+    assert set(by_model_id) == {
+        "gpt-5.5",
+        "gpt-5.5-mini",
+        "text-embedding-3-small",
+        "omni-moderation-latest",
+    }
+    assert by_model_id["gpt-5.5"].supports_streaming is True
+    assert by_model_id["gpt-5.5"].supports_tools is True
+    assert by_model_id["text-embedding-3-small"].supports_embeddings is True
+    assert by_model_id["text-embedding-3-small"].supports_streaming is False
+    assert by_model_id["omni-moderation-latest"].supports_tools is False
+
+
 def test_openai_provider_streams_chat_chunks() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content.decode("utf-8"))
@@ -241,6 +330,96 @@ def test_openai_provider_streams_chat_chunks() -> None:
     assert chunks[-1]["finish_reason"] == "stop"
     assert chunks[-1]["input_tokens"] == 11
     assert chunks[-1]["output_tokens"] == 2
+
+
+def test_openai_provider_uses_max_completion_tokens_for_gpt5_family() -> None:
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["payload"] = json.loads(request.content.decode("utf-8"))
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl_gpt5",
+                "model": "gpt-5",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "READY"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 4, "total_tokens": 14},
+            },
+        )
+
+    provider = OpenAIProvider(
+        "gpt-5",
+        api_key="test-openai-key",
+        base_url="https://api.openai.com/v1",
+        transport=httpx.MockTransport(handler),
+    )
+    request = ChatCompletionRequest.model_validate(
+        {
+            "model": "gpt-5",
+            "messages": [{"role": "user", "content": "Reply with READY."}],
+            "temperature": 0.2,
+            "max_tokens": 64,
+            "metadata": {"session_id": "sess_provider"},
+        }
+    )
+
+    result = asyncio.run(provider.invoke(request))
+
+    payload = captured["payload"]
+    assert payload["max_completion_tokens"] == 64
+    assert "max_tokens" not in payload
+    assert "temperature" not in payload
+    assert result["content"] == "READY"
+
+
+def test_openai_provider_keeps_temperature_for_non_gpt5_models() -> None:
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["payload"] = json.loads(request.content.decode("utf-8"))
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl_gpt4o",
+                "model": "gpt-4o",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "READY"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 4, "total_tokens": 14},
+            },
+        )
+
+    provider = OpenAIProvider(
+        "gpt-4o",
+        api_key="test-openai-key",
+        base_url="https://api.openai.com/v1",
+        transport=httpx.MockTransport(handler),
+    )
+    request = ChatCompletionRequest.model_validate(
+        {
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "Reply with READY."}],
+            "temperature": 0.2,
+            "max_tokens": 64,
+            "metadata": {"session_id": "sess_provider"},
+        }
+    )
+
+    asyncio.run(provider.invoke(request))
+
+    payload = captured["payload"]
+    assert payload["max_tokens"] == 64
+    assert payload["temperature"] == 0.2
 
 
 async def _collect(stream) -> list[dict[str, object]]:

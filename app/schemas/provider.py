@@ -1,6 +1,12 @@
 """Provider schemas."""
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+
+class ProviderRequestShape(BaseModel):
+    accepts_temperature: bool = True
+    accepts_top_p: bool = True
+    accepts_stop_sequences: bool = True
 
 
 class ProviderCapability(BaseModel):
@@ -12,3 +18,4 @@ class ProviderCapability(BaseModel):
     supports_tools: bool = False
     max_context_tokens: int = 0
     max_output_tokens: int = 0
+    request_shape: ProviderRequestShape = Field(default_factory=ProviderRequestShape)

@@ -126,6 +126,8 @@ def test_continuous_improvement_flow_processes_outbox_and_reports_kpis() -> None
         metrics = {item["metric_name"]: item for item in payload["metrics"]}
         assert metrics["avoided_frontier_spend"]["metric_value"] > 0
         assert metrics["frontier_to_local_substitution_rate"]["metric_value"] > 0
+        assert "node_rollups" in payload
+        assert "pool_rollups" in payload
         assert Path(payload["report_path"]).exists()
 
         session = get_session_factory()()

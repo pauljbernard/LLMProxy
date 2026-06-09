@@ -1,19 +1,21 @@
 """Native proxy endpoints."""
 
 from pathlib import Path
+from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import get_async_session, get_runtime_settings, get_session, require_api_token, require_operator_token
+from app.api.dependencies import get_async_session, get_runtime_settings, get_session, require_api_token, require_operator_token, require_platform_listener
 from app.config import Settings
 from app.proxy.candidates import (
     approve_training_candidate,
     get_training_candidate,
     list_training_candidates,
     reject_training_candidate,
+    summarize_candidate_interactions,
 )
 from app.proxy.classifier import classify_request
 from app.proxy.ensemble import run_teacher_ensemble
@@ -31,7 +33,7 @@ from app.schemas.chat import ChatCompletionRequest
 from app.schemas.ensemble import EnsembleResponse
 from app.schemas.registry import ModelRegistrationRequest, ModelRegistrationResponse
 
-router = APIRouter(prefix="/proxy", tags=["proxy-native"])
+router = APIRouter(prefix="/proxy", tags=["proxy-native"], dependencies=[Depends(require_platform_listener)])
 
 
 @router.post("/ensemble", response_model=EnsembleResponse, dependencies=[Depends(require_api_token)])
@@ -63,28 +65,68 @@ async def ensemble(
     return response
 
 
-@router.get("/training-candidates", response_model=list[TrainingCandidateView], dependencies=[Depends(require_api_token)])
+@router.get("/training-candidates", dependencies=[Depends(require_api_token)])
 def list_training_candidates_endpoint(
+    paginated: bool = False,
+    limit: int = Query(default=20, le=200),
+    offset: int = Query(default=0, ge=0),
+    domain: str | None = Query(default=None),
+    approval_status: str | None = Query(default=None),
+    interaction_protocol: str | None = Query(default=None),
+    interaction_operation: str | None = Query(default=None),
+    interaction_outcome: str | None = Query(default=None),
+    prompt_template_name: str | None = Query(default=None),
+    prompt_template_version: int | None = None,
+    prompt_template_selection_mode: str | None = Query(default=None, pattern="^(active|challenger_canary|explicit)$"),
     session: Session = Depends(get_session),
-) -> list[TrainingCandidateView]:
-    candidates = list_training_candidates(session)
-    return [
-        TrainingCandidateView(
-            id=candidate.id,
-            request_log_id=candidate.request_log_id,
-            routing_decision_id=candidate.routing_decision_id,
-            session_id=candidate.session_id,
-            domain=candidate.domain,
-            task_type=candidate.task_type,
-            status=candidate.status,
-            quality_score=candidate.quality_score,
-            approval_status=candidate.approval_status,
-            export_eligible=candidate.export_eligible,
-            selected_response=candidate.selected_response,
-            metadata=candidate.metadata_json,
+) -> list[TrainingCandidateView] | dict[str, Any]:
+    candidates = list_training_candidates(
+        session,
+        domain=domain,
+        approval_status=approval_status,
+        interaction_protocol=interaction_protocol,
+        interaction_operation=interaction_operation,
+        interaction_outcome=interaction_outcome,
+        prompt_template_name=prompt_template_name,
+        prompt_template_version=prompt_template_version,
+        prompt_template_selection_mode=prompt_template_selection_mode,
+    )
+    payload = [
+        TrainingCandidateView.model_validate(
+            {
+                "id": candidate.id,
+                "request_log_id": candidate.request_log_id,
+                "routing_decision_id": candidate.routing_decision_id,
+                "session_id": candidate.session_id,
+                "domain": candidate.domain,
+                "task_type": candidate.task_type,
+                "status": candidate.status,
+                "quality_score": candidate.quality_score,
+                "approval_status": candidate.approval_status,
+                "export_eligible": candidate.export_eligible,
+                "selected_response": candidate.selected_response,
+                "metadata": candidate.metadata_json,
+                "requested_model": (candidate.metadata_json or {}).get("requested_model"),
+                "effective_model": (candidate.metadata_json or {}).get("effective_model"),
+                "prompt_template_name": (candidate.metadata_json or {}).get("prompt_template_name"),
+                "prompt_template_version": (candidate.metadata_json or {}).get("prompt_template_version"),
+                "prompt_template_render_hash": (candidate.metadata_json or {}).get("prompt_template_render_hash"),
+                "prompt_template_selection_mode": (candidate.metadata_json or {}).get("prompt_template_selection_mode"),
+                "prompt_template_rollout_percentage": (candidate.metadata_json or {}).get("prompt_template_rollout_percentage"),
+                **summarize_candidate_interactions(candidate),
+            }
         )
         for candidate in candidates
     ]
+    if not paginated:
+        return payload
+    items = payload[offset:offset + limit]
+    return {
+        "items": [item.model_dump(mode="json") for item in items],
+        "total": len(payload),
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 @router.post(

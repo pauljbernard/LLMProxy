@@ -89,6 +89,17 @@ def estimate_cost_usd(*, provider_name: str, model_id: str, input_tokens: int, o
     )
 
 
+def estimate_cost_breakdown_usd(*, provider_name: str, model_id: str, input_tokens: int, output_tokens: int) -> dict[str, float]:
+    pricing = resolve_model_pricing(provider_name=provider_name, model_id=model_id)
+    input_cost = round(max(0, int(input_tokens)) * pricing.input_cost_per_token, 6)
+    output_cost = round(max(0, int(output_tokens)) * pricing.output_cost_per_token, 6)
+    return {
+        "input_cost_estimate": input_cost,
+        "output_cost_estimate": output_cost,
+        "total_cost_estimate": round(input_cost + output_cost, 6),
+    }
+
+
 def value_per_dollar(score: float, cost: float) -> float:
     if cost <= 0:
         return 0.0

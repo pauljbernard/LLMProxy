@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,6 +26,12 @@ def emit_error(message: str) -> int:
     sys.stderr.write(f"{message}\n")
     sys.stderr.flush()
     return 1
+
+
+def emit_progress(payload: dict[str, Any]) -> None:
+    json.dump({"type": "progress", "payload": payload}, sys.stdout)
+    sys.stdout.write("\n")
+    sys.stdout.flush()
 
 
 def load_request() -> TrainingRequest:
@@ -81,6 +88,25 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
     if not rows:
         raise BackendContractError(f"Dataset file is empty: {path}")
     return rows
+
+
+def count_jsonl_records(path: Path) -> int:
+    if not path.exists():
+        raise BackendContractError(f"Dataset path does not exist: {path}")
+    count = 0
+    with path.open("r", encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                record = json.loads(stripped)
+            except json.JSONDecodeError as exc:
+                raise BackendContractError(f"Invalid JSONL at {path}:{line_number}") from exc
+            if not isinstance(record, dict):
+                raise BackendContractError(f"Expected JSON object at {path}:{line_number}")
+            count += 1
+    return count
 
 
 def build_messages(record: dict[str, Any]) -> list[dict[str, str]]:
@@ -194,3 +220,42 @@ def emit_result(
     sys.stdout.flush()
     return 0
 
+
+def emit_streaming_result(
+    *,
+    artifact_dir: Path,
+    metrics: dict[str, Any],
+    checkpoint_path: Path,
+    log_path: Path,
+    metrics_path: Path,
+) -> int:
+    json.dump(
+        {
+            "type": "result",
+            "payload": {
+                "status": "completed",
+                "metrics": metrics,
+                "artifact_path": str(artifact_dir),
+                "checkpoint_path": str(checkpoint_path),
+                "log_path": str(log_path),
+                "metrics_path": str(metrics_path),
+            },
+        },
+        sys.stdout,
+    )
+    sys.stdout.write("\n")
+    sys.stdout.flush()
+    return 0
+
+
+def require_proxy_environment() -> dict[str, str]:
+    base_url = os.getenv("LLMPROXY_BASE_URL", "").strip()
+    api_key = os.getenv("LLMPROXY_API_KEY", "").strip()
+    if not base_url:
+        raise BackendContractError("Missing LLMPROXY_BASE_URL for proxy-routed trainer connectivity.")
+    if not api_key:
+        raise BackendContractError("Missing LLMPROXY_API_KEY for proxy-routed trainer connectivity.")
+    return {
+        "base_url": base_url,
+        "api_key_present": "true",
+    }

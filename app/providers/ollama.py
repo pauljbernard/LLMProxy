@@ -142,12 +142,21 @@ class OllamaProvider(BaseProvider):
         try:
             async with self._client(base_url=self.base_url, timeout_seconds=3.0) as client:
                 response = await client.get("/api/tags")
+            raw_response = response.json() if response.content else {}
+            installed_models = {
+                str(item.get("model") or item.get("name") or "").strip()
+                for item in (raw_response.get("models") or [])
+                if isinstance(item, dict)
+            }
+            model_present = self.model_id in installed_models
             return {
-                "ok": response.status_code < 500,
+                "ok": response.status_code < 500 and model_present,
                 "provider": self.provider_name,
                 "model": self.model_id,
                 "status_code": response.status_code,
                 "latency_ms": int((time() - started_at) * 1000),
+                "detail": "" if model_present else f"Configured model '{self.model_id}' is not installed in Ollama.",
+                "installed_model_count": len(installed_models),
             }
         except Exception as exc:
             return {

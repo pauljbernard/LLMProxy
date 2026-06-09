@@ -1,36 +1,40 @@
 """Model registry endpoints."""
 
 from pathlib import Path
+from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
-from app.api.dependencies import AuthPrincipal, get_runtime_settings, require_api_token
+from app.api.dependencies import AuthPrincipal, get_runtime_settings, require_api_token, require_platform_listener
 from app.config import Settings
 from app.registry.artifact_store import list_model_packages
-from app.registry.model_registry import list_provider_capabilities
+from app.registry.model_registry import list_provider_capabilities_async
 from app.schemas.provider import ProviderCapability
 from app.schemas.registry import ModelPackageView
 
-router = APIRouter(prefix="/models", tags=["models"])
+router = APIRouter(prefix="/models", tags=["models"], dependencies=[Depends(require_platform_listener)])
 
 
 @router.get("", response_model=list[ProviderCapability])
-def list_registered_models(
+async def list_registered_models(
     settings: Settings = Depends(get_runtime_settings),
     principal: AuthPrincipal = Depends(require_api_token),
 ) -> list[ProviderCapability]:
     allowed_models = set(principal.models_allowed) if principal.models_allowed else None
-    return list_provider_capabilities(settings, allowed_models=allowed_models)
+    return await list_provider_capabilities_async(settings, allowed_models=allowed_models)
 
 
-@router.get("/local", response_model=list[ModelPackageView])
+@router.get("/local")
 def list_local_model_packages(
+    paginated: bool = False,
+    limit: int = Query(default=20, le=200),
+    offset: int = Query(default=0, ge=0),
     settings: Settings = Depends(get_runtime_settings),
     principal: AuthPrincipal = Depends(require_api_token),
-) -> list[ModelPackageView]:
+) -> list[ModelPackageView] | dict[str, Any]:
     manifests = list_model_packages(Path(settings.llmproxy_models_path))
     allowed_models = set(principal.models_allowed) if principal.models_allowed else None
-    return [
+    payload = [
         ModelPackageView(
             model_registry_id=str(manifest["model_registry_id"]),
             model_alias=str(manifest["model_alias"]),
@@ -43,3 +47,12 @@ def list_local_model_packages(
         for manifest in manifests
         if allowed_models is None or str(manifest["model_alias"]) in allowed_models
     ]
+    if not paginated:
+        return payload
+    items = payload[offset:offset + limit]
+    return {
+        "items": [item.model_dump(mode="json") for item in items],
+        "total": len(payload),
+        "limit": limit,
+        "offset": offset,
+    }

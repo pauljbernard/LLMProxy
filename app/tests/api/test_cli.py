@@ -142,6 +142,7 @@ def test_cli_training_run_outputs_response(monkeypatch, capsys) -> None:
             training_run_id="train_1",
             dataset_version_id=request.dataset_version_id,
             training_mode=request.training_mode,
+            trainer_backend=request.trainer_backend,
             status="completed",
             artifact_path="/tmp/train_1",
             metrics={"loss": 0.1},
@@ -154,11 +155,12 @@ def test_cli_training_run_outputs_response(monkeypatch, capsys) -> None:
 
     monkeypatch.setattr("app.cli.session_scope", fake_scope)
 
-    exit_code = main(["training", "run", "dsv_1", "gpt-5.5", "lora"])
+    exit_code = main(["training", "run", "dsv_1", "gpt-5.5", "lora", "--trainer-backend", "unsloth"])
 
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["training_run_id"] == "train_1"
+    assert payload["trainer_backend"] == "unsloth"
 
 
 def test_cli_scheduler_run_once(monkeypatch, capsys) -> None:

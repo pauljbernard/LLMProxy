@@ -2,7 +2,8 @@ from pathlib import Path
 
 from app.config import Settings
 from app.db.models import DatasetVersion, TrainingRun
-from app.evaluation.runner import run_evaluation
+from app.db.models import EvaluationRun
+from app.evaluation.runner import execute_evaluation_run, run_evaluation
 from app.schemas.evaluation import EvaluationRunRequest
 
 
@@ -18,6 +19,8 @@ class FakeSession:
             return self.training_run
         if model is DatasetVersion and object_id == self.dataset_version.id:
             return self.dataset_version
+        if model is EvaluationRun and getattr(self, "evaluation_run", None) is not None and object_id == self.evaluation_run.id:
+            return self.evaluation_run
         return None
 
     def add(self, item: object) -> None:
@@ -25,6 +28,9 @@ class FakeSession:
 
     def commit(self) -> None:
         self.commit_count += 1
+
+    def flush(self) -> None:
+        return None
 
 
 def build_training_run() -> TrainingRun:
@@ -53,6 +59,58 @@ def build_dataset_version() -> DatasetVersion:
     )
 
 
+def test_execute_evaluation_run_issues_and_disables_proxy_key(monkeypatch, tmp_path: Path) -> None:
+    from app.evaluation import runner as evaluation_runner
+
+    session = FakeSession(build_training_run(), build_dataset_version())
+    session.evaluation_run = EvaluationRun(
+        id="eval_1",
+        training_run_id="train_1",
+        domain="coding",
+        frontier_baseline_name="gpt-5.5",
+        status="pending",
+        result_json={},
+    )
+    fake_record = type("KeyRecord", (), {"id": "vkey_eval_1", "key_prefix": "sk-eval", "status": "active"})()
+
+    monkeypatch.setattr(
+        evaluation_runner,
+        "create_virtual_key_record",
+        lambda *args, **kwargs: (fake_record, "sk-eval-token"),
+    )
+    monkeypatch.setattr(evaluation_runner, "emit_event", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        evaluation_runner,
+        "run_evaluation",
+        lambda session, request, settings, evaluation_run_id=None, proxy_base_url=None, proxy_api_key=None, proxy_auth_summary=None: type(
+            "Result",
+            (),
+            {
+                "evaluation_run_id": "eval_1",
+                "training_run_id": "train_1",
+                "domain": "coding",
+                "frontier_baseline_name": "gpt-5.5",
+                "overall_score": 0.9,
+                "quality_delta_vs_frontier": 0.0,
+                "value_per_dollar_gain_vs_frontier": 1.0,
+                "promotion_status": "approved",
+                "package_manifest_path": str(tmp_path / "model-package.json"),
+                "result": {"proxy_auth": proxy_auth_summary},
+            },
+        )(),
+    )
+
+    result = execute_evaluation_run(
+        session,
+        evaluation_run_id="eval_1",
+        settings=Settings(llmproxy_evaluation_command="fake-evaluator", llmproxy_internal_api_base_url="http://api:8000"),
+    )
+
+    assert result.evaluation_run_id == "eval_1"
+    assert fake_record.status == "disabled"
+    assert session.evaluation_run.result_json["proxy_auth"]["key_prefix"] == "sk-eval"
+
+
 def test_run_evaluation_blocks_until_real_backend_exists(tmp_path) -> None:
     session = FakeSession(build_training_run(), build_dataset_version())
     settings = Settings(llmproxy_models_path=str(tmp_path))
@@ -77,11 +135,12 @@ def test_run_evaluation_uses_configured_backend(monkeypatch, tmp_path: Path) -> 
         llmproxy_models_path=str(tmp_path),
         llmproxy_evaluation_command="fake-evaluator",
     )
+    captured: dict[str, object] = {}
 
     monkeypatch.setattr(
         evaluation_runner,
         "run_json_command",
-        lambda **kwargs: {
+        lambda **kwargs: captured.update(kwargs) or {
             "overall_score": 0.94,
             "package_metadata": {
                 "runtime_targets": ["ollama"],
@@ -101,6 +160,7 @@ def test_run_evaluation_uses_configured_backend(monkeypatch, tmp_path: Path) -> 
     assert result.overall_score == 0.94
     assert result.package_manifest_path.endswith("model-package.json")
     assert result.result["backend_result"]["record_scores"]["coding-1"] == 0.95
+    assert captured["payload"]["proxy_auth"]["scope"] == ["evaluation", "judge", "synthetic_data"]
     assert len(session.added) >= 2
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 
 from sqlalchemy.orm import Session
 
@@ -14,12 +15,74 @@ from app.deployment.vllm import deploy_to_vllm
 from app.integration.events import emit_event
 from app.integration.routing_policy import get_latest_policy, list_policy_versions, persist_policy_version
 from app.proxy.recorder import generate_prefixed_id
-from app.registry.artifact_store import get_model_package_by_alias
+from app.registry.artifact_store import get_model_package_by_alias, list_model_packages
 from app.schemas.integration import DeploymentRequest, DeploymentResponse, FrontierPolicyEntryRequest
 
 
 def list_routing_policies(session: Session) -> list[object]:
     return list_policy_versions(session)
+
+
+def list_local_deployment_inventory(
+    session: Session,
+    *,
+    settings: Settings,
+) -> list[dict[str, object]]:
+    models_root = Path(settings.llmproxy_models_path)
+    policy = get_latest_policy(session)
+    local_entries = {
+        str(entry.get("model_alias") or ""): entry
+        for entry in policy.get("entries", [])
+        if str(entry.get("entry_type", "")) == "local" and str(entry.get("model_alias") or "")
+    }
+    rows: list[dict[str, object]] = []
+    for package in list_model_packages(models_root):
+        model_alias = str(package.get("model_alias", ""))
+        package_dir = models_root / model_alias
+        deployment_manifests = sorted(package_dir.glob("deployment*.json"))
+        deployment_payload: dict[str, object] | None = None
+        deployment_manifest_path: str | None = None
+        if deployment_manifests:
+            deployment_manifest = deployment_manifests[-1]
+            deployment_manifest_path = str(deployment_manifest)
+            deployment_payload = json.loads(deployment_manifest.read_text(encoding="utf-8"))
+        policy_entry = local_entries.get(model_alias)
+        runtime_targets = package.get("compatibility", {}).get("runtime_targets") or [package.get("runtime") or "ollama"]
+        deployment_status = str((deployment_payload or {}).get("status") or "not_deployed")
+        deployment_runtime = str((deployment_payload or {}).get("runtime") or "")
+        routed_live = bool(policy_entry)
+        if routed_live:
+            lifecycle_stage = "routed_live"
+        elif deployment_status == "deployed":
+            lifecycle_stage = "deployed"
+        else:
+            lifecycle_stage = "registered"
+        rows.append(
+            {
+                "model_alias": model_alias,
+                "base_model": str(package.get("base_model") or ""),
+                "package_state": "registered",
+                "promotion_status": str(package.get("quality_summary", {}).get("promotion_status", package.get("status", ""))),
+                "runtime_target": str(runtime_targets[0] or "ollama"),
+                "deployment_runtime": deployment_runtime,
+                "deployment_status": deployment_status,
+                "endpoint_url": str((deployment_payload or {}).get("endpoint_url") or package.get("endpoint_url") or ""),
+                "package_manifest_path": str(package_dir / "model-package.json"),
+                "deployment_manifest_path": deployment_manifest_path,
+                "artifact_paths": package.get("artifact_paths", []),
+                "domains": package.get("domains", []),
+                "task_types": package.get("task_types", []),
+                "active_route_mode": str((policy_entry or {}).get("deployment_mode") or ""),
+                "active_route_runtime": str((policy_entry or {}).get("runtime") or ""),
+                "active_route_endpoint_url": str((policy_entry or {}).get("endpoint_url") or ""),
+                "active_route_domains": (policy_entry or {}).get("domains", []),
+                "active_route_task_types": (policy_entry or {}).get("task_types", []),
+                "routing_state": "routed_live" if routed_live else "not_routed",
+                "routed_live": routed_live,
+                "lifecycle_stage": lifecycle_stage,
+            }
+        )
+    return sorted(rows, key=lambda row: str(row.get("model_alias", "")))
 
 
 def _provider_family_for_frontier(provider_key: str) -> str:
@@ -65,15 +128,16 @@ def _deploy_to_runtime(
     model_alias: str,
     model_package: dict[str, object],
     models_root: Path,
+    settings: Settings,
 ) -> dict[str, object]:
     if runtime == "ollama":
-        return deploy_to_ollama(model_alias=model_alias, model_package=model_package, models_root=models_root)
+        return deploy_to_ollama(model_alias=model_alias, model_package=model_package, models_root=models_root, settings=settings)
     if runtime == "vllm":
-        return deploy_to_vllm(model_alias=model_alias, model_package=model_package, models_root=models_root)
+        return deploy_to_vllm(model_alias=model_alias, model_package=model_package, models_root=models_root, settings=settings)
     if runtime == "llama_cpp":
-        return deploy_to_llama_cpp(model_alias=model_alias, model_package=model_package, models_root=models_root)
+        return deploy_to_llama_cpp(model_alias=model_alias, model_package=model_package, models_root=models_root, settings=settings)
     if runtime == "mlx":
-        return deploy_to_mlx(model_alias=model_alias, model_package=model_package, models_root=models_root)
+        return deploy_to_mlx(model_alias=model_alias, model_package=model_package, models_root=models_root, settings=settings)
     raise ValueError(f"Runtime '{runtime}' is not supported.")
 
 
@@ -96,6 +160,7 @@ def deploy_model(
         model_alias=model_alias,
         model_package=package,
         models_root=Path(settings.llmproxy_models_path),
+        settings=settings,
     )
     _healthcheck_runtime(runtime, deployment_result)
 
@@ -249,10 +314,12 @@ def upsert_frontier_policy_entry(
         "provider_name": request.provider_key,
         "provider_family": _provider_family_for_frontier(request.provider_key),
         "model_id": request.model_id,
+        "requested_models": request.requested_models or [],
         "domains": request.domains,
         "task_types": request.task_types or [],
         "tags": request.tags or [],
         "labels": request.labels or request.tags or [],
+        "listener_ids": request.listener_ids or [],
         "regions": request.regions or [],
         "deployment_mode": request.deployment_mode,
         "canary_percent": request.canary_percent,

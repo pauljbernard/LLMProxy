@@ -6,6 +6,7 @@ from app.integration.jobs import (
     enqueue_evaluation_run_job,
     enqueue_kpi_report_job,
     enqueue_replicate_prediction_job,
+    enqueue_training_run_job,
 )
 from app.integration.outbox import process_pending_events
 from app.runtime import run_worker_iteration
@@ -158,6 +159,15 @@ def test_enqueue_evaluation_run_job_creates_pending_job() -> None:
     assert job.job_type == "evaluation.run"
     assert job.status == "pending"
     assert job.payload_json["evaluation_run_id"] == "eval_1"
+
+
+def test_enqueue_training_run_job_uses_single_attempt() -> None:
+    session = FakeSession()
+
+    job = enqueue_training_run_job(session, training_run_id="train_1")
+
+    assert job.job_type == "training.run"
+    assert job.max_attempts == 1
 
 
 def test_enqueue_deployment_activation_job_creates_pending_job() -> None:

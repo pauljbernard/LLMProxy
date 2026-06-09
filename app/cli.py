@@ -424,6 +424,7 @@ def cmd_training_run(args: argparse.Namespace) -> int:
         dataset_version_id=args.dataset_version_id,
         base_model=args.base_model,
         training_mode=args.training_mode,
+        trainer_backend=args.trainer_backend,
         epochs=args.epochs,
         learning_rate=args.learning_rate,
         adapter_name=args.adapter_name,
@@ -443,6 +444,7 @@ def cmd_training_list(args: argparse.Namespace) -> int:
                 "dataset_version_id": run.dataset_version_id,
                 "base_model": run.base_model,
                 "training_mode": run.training_mode,
+                "trainer_backend": str(run.training_config_json.get("trainer_backend", "custom")),
                 "status": run.status,
                 "artifact_path": run.artifact_path,
             }
@@ -751,6 +753,7 @@ def build_parser() -> argparse.ArgumentParser:
     training_run.add_argument("dataset_version_id")
     training_run.add_argument("base_model")
     training_run.add_argument("training_mode", choices=["lora", "qlora"])
+    training_run.add_argument("--trainer-backend", choices=["custom", "unsloth"], default="custom")
     training_run.add_argument("--epochs", type=int, default=3)
     training_run.add_argument("--learning-rate", type=float, default=0.0002)
     training_run.add_argument("--adapter-name")

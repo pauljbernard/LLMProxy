@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 from app.config import Settings
@@ -20,6 +22,36 @@ from app.db.models import (
     TrainingCandidate,
     TrainingRun,
 )
+from app.services.learning_pipeline import (
+    request_automation_owner_id,
+    request_automation_scope,
+    request_traffic_origin,
+    request_virtual_key_id,
+    request_virtual_key_role,
+)
+from app.services.interaction_traces import build_request_interaction_traces, summarize_interaction_trace_protocols
+from app.proxy.candidates import summarize_candidate_interactions
+
+
+def prompt_template_summary_from_request(request: RequestLog | dict[str, Any]) -> dict[str, Any]:
+    if isinstance(request, RequestLog):
+        payload = request.request_json or {}
+        effective_payload = request.effective_request_json or {}
+    else:
+        payload = request
+        effective_payload = payload.get("effective_request_json") if isinstance(payload.get("effective_request_json"), dict) else {}
+    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+    effective_metadata = effective_payload.get("metadata") if isinstance(effective_payload.get("metadata"), dict) else {}
+    return {
+        "prompt_template_name": metadata.get("prompt_template_name") or effective_metadata.get("prompt_template_name"),
+        "prompt_template_version": metadata.get("prompt_template_version") or effective_metadata.get("prompt_template_version"),
+        "prompt_template_variables": metadata.get("prompt_template_variables") or {},
+        "prompt_template_render_hash": effective_metadata.get("prompt_template_render_hash"),
+        "prompt_template_model_override": effective_metadata.get("prompt_template_model_override"),
+        "prompt_template_selection_mode": effective_metadata.get("prompt_template_selection_mode"),
+        "prompt_template_rollout_percentage": effective_metadata.get("prompt_template_rollout_percentage"),
+        "effective_model": effective_payload.get("model"),
+    }
 
 
 def settings_payload(settings: Settings) -> dict[str, Any]:
@@ -28,6 +60,8 @@ def settings_payload(settings: Settings) -> dict[str, Any]:
         "llmproxy_log_level": settings.llmproxy_log_level,
         "llmproxy_api_host": settings.llmproxy_api_host,
         "llmproxy_api_port": settings.llmproxy_api_port,
+        "llmproxy_inbound_listeners": settings.configured_inbound_listeners(),
+        "llmproxy_model_monitors": settings.configured_model_monitors(),
         "llmproxy_database_url": settings.llmproxy_database_url,
         "llmproxy_redis_url": settings.llmproxy_redis_url,
         "llmproxy_prometheus_metrics_enabled": settings.llmproxy_prometheus_metrics_enabled,
@@ -56,8 +90,14 @@ def settings_payload(settings: Settings) -> dict[str, Any]:
         "llmproxy_bedrock_model": settings.llmproxy_bedrock_model,
         "llmproxy_azure_openai_model": settings.llmproxy_azure_openai_model,
         "llmproxy_ollama_model": settings.llmproxy_ollama_model,
+        "llmproxy_internal_api_base_url": settings.llmproxy_internal_api_base_url,
+        "llmproxy_unsloth_studio_enabled": settings.llmproxy_unsloth_studio_enabled,
+        "llmproxy_unsloth_studio_url": settings.llmproxy_unsloth_studio_url,
+        "llmproxy_unsloth_studio_internal_url": settings.llmproxy_unsloth_studio_internal_url,
         "llmproxy_mcp_max_tool_roundtrips": getattr(settings, "llmproxy_mcp_max_tool_roundtrips", None),
         "llmproxy_mcp_servers": getattr(settings, "llmproxy_mcp_servers", {}),
+        "llmproxy_a2a_peers": getattr(settings, "llmproxy_a2a_peers", {}),
+        "llmproxy_rest_endpoints": getattr(settings, "llmproxy_rest_endpoints", {}),
         "llmproxy_exports_path": settings.llmproxy_exports_path,
         "llmproxy_datasets_path": settings.llmproxy_datasets_path,
         "llmproxy_models_path": settings.llmproxy_models_path,
@@ -71,14 +111,24 @@ def settings_payload(settings: Settings) -> dict[str, Any]:
 
 
 def request_summary_payload(request: RequestLog) -> dict[str, Any]:
+    metadata = request.request_json.get("metadata", {}) if isinstance(request.request_json, dict) else {}
     return {
         "id": request.id,
         "session_id": request.session_id,
+        "listener_id": metadata.get("listener_id"),
+        "listener_host": metadata.get("listener_host"),
+        "listener_port": metadata.get("listener_port"),
         "requested_model": request.requested_model,
         "domain": request.domain,
         "task_type": request.task_type,
         "complexity": request.complexity,
         "privacy_level": request.privacy_level,
+        "traffic_origin": request_traffic_origin(request),
+        "automation_scope": request_automation_scope(request),
+        "automation_owner_id": request_automation_owner_id(request),
+        "virtual_key_id": request_virtual_key_id(request),
+        "virtual_key_role": request_virtual_key_role(request),
+        **prompt_template_summary_from_request(request),
         "created_at": request.created_at,
     }
 
@@ -91,6 +141,14 @@ def routing_decision_payload(item: RoutingDecisionRecord) -> dict[str, Any]:
         "selected_provider_family": item.selected_provider_family,
         "selected_model": item.selected_model,
         "selected_mode": item.selected_mode,
+        "selected_entry_id": item.selected_entry_id,
+        "selected_pool_id": item.selected_pool_id,
+        "selected_node_id": item.selected_node_id,
+        "selected_node_role": item.selected_node_role,
+        "selected_node_labels": item.selected_node_labels_json,
+        "selected_capacity_class": item.selected_capacity_class,
+        "selected_balancing_strategy": item.selected_balancing_strategy,
+        "selected_affinity_key": item.selected_affinity_key,
         "decision_rationale": item.decision_rationale,
         "predicted_cost_class": item.predicted_cost_class,
         "predicted_latency_class": item.predicted_latency_class,
@@ -101,12 +159,14 @@ def routing_decision_payload(item: RoutingDecisionRecord) -> dict[str, Any]:
 
 
 def model_response_payload(item: ModelResponse) -> dict[str, Any]:
+    response_json = item.response_json if isinstance(item.response_json, dict) else {}
     return {
         "id": item.id,
         "provider": item.provider,
         "provider_family": item.provider_family,
         "model": item.model,
         "latency_ms": item.latency_ms,
+        "first_response_latency_ms": response_json.get("first_response_latency_ms"),
         "input_tokens": item.input_tokens,
         "output_tokens": item.output_tokens,
         "cost_estimate": item.cost_estimate,
@@ -132,6 +192,7 @@ def judge_critique_payload(item: JudgeCritique) -> dict[str, Any]:
 
 
 def training_candidate_payload(item: TrainingCandidate) -> dict[str, Any]:
+    metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
     return {
         "id": item.id,
         "domain": item.domain,
@@ -141,8 +202,16 @@ def training_candidate_payload(item: TrainingCandidate) -> dict[str, Any]:
         "quality_score": item.quality_score,
         "export_eligible": item.export_eligible,
         "selected_response": item.selected_response,
-        "metadata": item.metadata_json,
+        "metadata": metadata,
+        "requested_model": metadata.get("requested_model"),
+        "effective_model": metadata.get("effective_model"),
+        "prompt_template_name": metadata.get("prompt_template_name"),
+        "prompt_template_version": metadata.get("prompt_template_version"),
+        "prompt_template_render_hash": metadata.get("prompt_template_render_hash"),
+        "prompt_template_selection_mode": metadata.get("prompt_template_selection_mode"),
+        "prompt_template_rollout_percentage": metadata.get("prompt_template_rollout_percentage"),
         "created_at": item.created_at,
+        **summarize_candidate_interactions(item),
     }
 
 
@@ -174,11 +243,22 @@ def request_detail_payload(
             trace = item.response_json.get("mcp_trace")
             if isinstance(trace, list):
                 mcp_trace.extend(trace)
+    interaction_traces = build_request_interaction_traces(
+        request=request,
+        routing_decisions=routing_decisions,
+        model_responses=model_responses,
+    )
     return {
-        "request": {**request_summary_payload(request), "request_json": request.request_json},
+        "request": {
+            **request_summary_payload(request),
+            "request_json": request.request_json,
+            "effective_request_json": request.effective_request_json,
+        },
         "routing_decisions": [routing_decision_payload(item) for item in routing_decisions],
         "model_responses": [model_response_payload(item) for item in model_responses],
         "mcp_trace": mcp_trace,
+        "interaction_traces": interaction_traces,
+        "interaction_protocols": summarize_interaction_trace_protocols(interaction_traces),
         "judge_critiques": [judge_critique_payload(item) for item in judge_critiques],
         "training_candidates": [training_candidate_payload(item) for item in candidates],
         "performance_samples": [performance_sample_payload(item) for item in performance_samples],
@@ -186,14 +266,57 @@ def request_detail_payload(
 
 
 def dataset_export_payload(item: DatasetExport) -> dict[str, Any]:
+    interaction_protocols: list[str] = []
+    interaction_protocol_counts: dict[str, int] = {}
+    prompt_rollout_modes: list[str] = []
+    prompt_rollout_mode_counts: dict[str, int] = {}
+    interaction_filters: dict[str, Any] = {}
+    manifest_name: str | None = None
+    try:
+        manifest_path = Path(item.manifest_path)
+        if manifest_path.exists():
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if isinstance(manifest, dict):
+                if isinstance(manifest.get("interaction_protocols"), list):
+                    interaction_protocols = [str(value) for value in manifest["interaction_protocols"] if str(value).strip()]
+                if isinstance(manifest.get("interaction_protocol_counts"), dict):
+                    interaction_protocol_counts = {
+                        str(key): int(value)
+                        for key, value in manifest["interaction_protocol_counts"].items()
+                        if str(key).strip()
+                    }
+                if isinstance(manifest.get("prompt_rollout_modes"), list):
+                    prompt_rollout_modes = [str(value) for value in manifest["prompt_rollout_modes"] if str(value).strip()]
+                if isinstance(manifest.get("prompt_rollout_mode_counts"), dict):
+                    prompt_rollout_mode_counts = {
+                        str(key): int(value)
+                        for key, value in manifest["prompt_rollout_mode_counts"].items()
+                        if str(key).strip()
+                    }
+                if isinstance(manifest.get("interaction_filters"), dict):
+                    interaction_filters = {
+                        str(key): value
+                        for key, value in manifest["interaction_filters"].items()
+                        if value not in (None, "", [])
+                    }
+                if manifest.get("name"):
+                    manifest_name = str(manifest["name"])
+    except (OSError, ValueError, TypeError):
+        pass
     return {
         "id": item.id,
         "domain": item.domain,
         "dataset_export_id": item.dataset_export_id,
+        "name": manifest_name,
         "manifest_path": item.manifest_path,
         "data_path": item.data_path,
         "record_count": item.record_count,
         "schema_version": item.schema_version,
+        "interaction_protocols": interaction_protocols,
+        "interaction_protocol_counts": interaction_protocol_counts,
+        "prompt_rollout_modes": prompt_rollout_modes,
+        "prompt_rollout_mode_counts": prompt_rollout_mode_counts,
+        "interaction_filters": interaction_filters,
         "created_at": item.created_at,
     }
 
@@ -231,8 +354,10 @@ def training_run_payload(run: TrainingRun) -> dict[str, Any]:
         "dataset_version_id": run.dataset_version_id,
         "base_model": run.base_model,
         "training_mode": run.training_mode,
+        "trainer_backend": str((run.training_config_json or {}).get("trainer_backend", "custom")),
         "status": run.status,
         "training_config_json": run.training_config_json,
+        "proxy_auth": dict((run.training_config_json or {}).get("proxy_auth", {})),
         "metrics_json": run.metrics_json,
         "artifact_path": run.artifact_path,
         "started_at": run.started_at,
@@ -251,6 +376,7 @@ def evaluation_run_payload(run: EvaluationRun) -> dict[str, Any]:
         "overall_score": run.overall_score,
         "quality_delta_vs_frontier": run.quality_delta_vs_frontier,
         "value_per_dollar_gain_vs_frontier": run.value_per_dollar_gain_vs_frontier,
+        "proxy_auth": dict((run.result_json or {}).get("proxy_auth", {})),
         "result_json": run.result_json,
         "created_at": run.created_at,
     }

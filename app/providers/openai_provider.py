@@ -8,6 +8,7 @@ from app.config import Settings
 from app.providers.base import BaseProvider
 from app.services.cost import estimate_cost_usd
 from app.schemas.chat import ChatCompletionRequest
+from app.schemas.provider import ProviderCapability
 
 
 class OpenAIProvider(BaseProvider):
@@ -66,14 +67,30 @@ class OpenAIProvider(BaseProvider):
         return payload
 
     @staticmethod
+    def _uses_max_completion_tokens(model_id: str) -> bool:
+        lower_model_id = str(model_id or "").strip().lower()
+        return lower_model_id.startswith("gpt-5")
+
+    @staticmethod
+    def _supports_temperature_override(model_id: str) -> bool:
+        lower_model_id = str(model_id or "").strip().lower()
+        return not lower_model_id.startswith("gpt-5")
+
+    @staticmethod
     def _request_payload(request: ChatCompletionRequest, *, model_id: str, stream: bool) -> dict[str, object]:
         payload: dict[str, object] = {
             "model": model_id,
             "messages": OpenAIProvider._request_messages(request.messages),
-            "temperature": request.temperature,
-            "max_tokens": request.max_tokens,
             "stream": stream,
         }
+        if OpenAIProvider._uses_max_completion_tokens(model_id):
+            payload["max_completion_tokens"] = request.max_tokens
+        else:
+            payload["max_tokens"] = request.max_tokens
+        if request.temperature is not None and (
+            OpenAIProvider._supports_temperature_override(model_id) or float(request.temperature) == 1.0
+        ):
+            payload["temperature"] = request.temperature
         passthrough_fields = (
             "top_p",
             "n",
@@ -100,6 +117,8 @@ class OpenAIProvider(BaseProvider):
             payload["response_format"] = request.response_format.model_dump(mode="json")
         if request.tools is not None:
             payload["tools"] = [tool.model_dump(mode="json") for tool in request.tools]
+        if request.metadata.forwarded_by_proxy:
+            payload["metadata"] = request.metadata.model_dump(mode="json")
         if stream:
             payload["stream_options"] = {"include_usage": True}
         return payload
@@ -142,6 +161,49 @@ class OpenAIProvider(BaseProvider):
         if self.require_api_key:
             self._require_config(self.api_key, field_name=self.api_key_config_field)
         return headers
+
+    @classmethod
+    def _capability_for_model(cls, model_id: str) -> ProviderCapability:
+        lower_model_id = model_id.lower()
+        is_embedding = lower_model_id.startswith("text-embedding-") or lower_model_id.endswith("-embedding")
+        is_moderation = "moderation" in lower_model_id
+        is_transcription = "transcribe" in lower_model_id or lower_model_id.startswith("whisper")
+        is_tts = lower_model_id.startswith("tts-") or lower_model_id.endswith("-tts") or lower_model_id.endswith("-speech")
+        is_image = "image" in lower_model_id or "dall-e" in lower_model_id
+        is_realtime = "realtime" in lower_model_id
+        supports_embeddings = is_embedding
+        supports_streaming = not any((is_embedding, is_moderation, is_transcription, is_tts, is_image, is_realtime))
+        supports_tools = supports_streaming
+        return ProviderCapability(
+            provider_family=cls.provider_family,
+            provider_name=cls.provider_name,
+            model_id=model_id,
+            supports_streaming=supports_streaming,
+            supports_embeddings=supports_embeddings,
+            supports_tools=supports_tools,
+            max_context_tokens=128_000,
+            max_output_tokens=8_192,
+        )
+
+    async def list_models(self) -> list[ProviderCapability]:
+        headers = self._headers()
+        async with self._client(
+            base_url=self.base_url,
+            headers=headers,
+            timeout_seconds=min(self.timeout_seconds, 10.0),
+        ) as client:
+            response = await client.get("/models")
+            response.raise_for_status()
+            raw_response = response.json()
+        capabilities: list[ProviderCapability] = []
+        for item in raw_response.get("data", []):
+            if not isinstance(item, dict):
+                continue
+            model_id = str(item.get("id") or "").strip()
+            if not model_id:
+                continue
+            capabilities.append(self._capability_for_model(model_id))
+        return capabilities or [self.capability]
 
     async def chat(self, request: ChatCompletionRequest) -> dict[str, object]:
         payload = self._request_payload(request, model_id=self.model_id, stream=False)

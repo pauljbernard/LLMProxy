@@ -3,12 +3,12 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import get_runtime_settings, get_session, require_api_token
+from app.api.dependencies import get_runtime_settings, get_session, require_api_token, require_platform_listener
 from app.config import Settings
 from app.datasets.ingestion import import_dataset as import_dataset_service
 from app.schemas.dataset import DatasetImportRequest, DatasetImportResponse
 
-router = APIRouter(prefix="/datasets", tags=["datasets"])
+router = APIRouter(prefix="/datasets", tags=["datasets"], dependencies=[Depends(require_platform_listener)])
 
 
 @router.post("/import", response_model=DatasetImportResponse, dependencies=[Depends(require_api_token)])

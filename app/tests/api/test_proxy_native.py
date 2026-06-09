@@ -1,6 +1,7 @@
 import httpx
 from fastapi.testclient import TestClient
 
+from app.db.models import TrainingCandidate
 from app.providers.anthropic_provider import AnthropicProvider
 from app.providers.google_provider import GoogleProvider
 from app.providers.openai_provider import OpenAIProvider
@@ -235,3 +236,164 @@ def test_register_model_writes_model_package(tmp_path, monkeypatch) -> None:
     assert payload["model_alias"] == "coding-lora-1"
     manifest_path = tmp_path / "coding-lora-1" / "model-package.json"
     assert manifest_path.exists()
+
+
+def test_list_training_candidates_supports_paginated_payload(monkeypatch) -> None:
+    from app.api import proxy_native
+    from app.api.dependencies import get_session
+
+    class FakeSession:
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        proxy_native,
+        "list_training_candidates",
+        lambda session, **kwargs: [
+            TrainingCandidate(
+                id="cand_1",
+                request_log_id="req_1",
+                routing_decision_id="rd_1",
+                session_id="sess_1",
+                domain="coding",
+                task_type="analysis",
+                status="captured",
+                quality_score=0.8,
+                approval_status="pending",
+                export_eligible=False,
+                selected_response="answer",
+                messages_json=[],
+                provenance_json={},
+                validation_json={},
+                metadata_json={
+                    "requested_model": "proxy-auto",
+                    "effective_model": "gpt-5",
+                    "prompt_template_name": "architecture_review",
+                    "prompt_template_version": 3,
+                    "prompt_template_render_hash": "a" * 64,
+                },
+            ),
+            TrainingCandidate(
+                id="cand_2",
+                request_log_id="req_2",
+                routing_decision_id="rd_2",
+                session_id="sess_2",
+                domain="coding",
+                task_type="analysis",
+                status="captured",
+                quality_score=0.9,
+                approval_status="approved",
+                export_eligible=True,
+                selected_response="answer",
+                messages_json=[],
+                provenance_json={},
+                validation_json={},
+                metadata_json={
+                    "requested_model": "proxy-teacher",
+                    "effective_model": "gpt-5-mini",
+                    "prompt_template_name": "lineage_probe",
+                    "prompt_template_version": 4,
+                    "prompt_template_render_hash": "b" * 64,
+                },
+            ),
+        ],
+    )
+
+    app.dependency_overrides[get_session] = lambda: FakeSession()
+    client = TestClient(app)
+    response = client.get("/proxy/training-candidates?paginated=true&limit=1&offset=1", headers={"Authorization": "Bearer change-me"})
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 2
+    assert payload["items"][0]["id"] == "cand_2"
+    assert payload["items"][0]["interaction_protocols"] == []
+    assert payload["items"][0]["interaction_operations"] == []
+    assert payload["items"][0]["interaction_outcome"] == "unknown"
+    assert payload["items"][0]["interaction_trace_count"] == 0
+    assert payload["items"][0]["requested_model"] == "proxy-teacher"
+    assert payload["items"][0]["effective_model"] == "gpt-5-mini"
+    assert payload["items"][0]["prompt_template_name"] == "lineage_probe"
+    assert payload["items"][0]["prompt_template_version"] == 4
+    assert payload["items"][0]["prompt_template_render_hash"] == "b" * 64
+
+
+def test_list_training_candidates_forwards_interaction_filters(monkeypatch) -> None:
+    from app.api import proxy_native
+    from app.api.dependencies import get_session
+
+    captured = {}
+
+    class FakeSession:
+        def close(self) -> None:
+            return None
+
+    def fake_list_training_candidates(session, **kwargs):
+        captured.update(kwargs)
+        return [
+            TrainingCandidate(
+                id="cand_3",
+                request_log_id="req_3",
+                routing_decision_id="rd_3",
+                session_id="sess_3",
+                domain="coding",
+                task_type="analysis",
+                status="captured",
+                quality_score=0.95,
+                approval_status="approved",
+                export_eligible=True,
+                selected_response="answer",
+                messages_json=[],
+                provenance_json={
+                    "interaction_traces": [
+                        {"protocol": "rest", "operation": "invoke_endpoint", "success": True},
+                    ],
+                },
+                validation_json={},
+                metadata_json={
+                    "requested_model": "proxy-auto",
+                    "effective_model": "gpt-5",
+                    "prompt_template_name": "architecture_review",
+                    "prompt_template_version": 7,
+                    "prompt_template_render_hash": "c" * 64,
+                    "prompt_template_selection_mode": "challenger_canary",
+                    "prompt_template_rollout_percentage": 15.0,
+                },
+            ),
+        ]
+
+    monkeypatch.setattr(proxy_native, "list_training_candidates", fake_list_training_candidates)
+
+    app.dependency_overrides[get_session] = lambda: FakeSession()
+    client = TestClient(app)
+    response = client.get(
+        "/proxy/training-candidates"
+        "?domain=coding&approval_status=approved&interaction_protocol=rest"
+        "&interaction_operation=invoke_endpoint&interaction_outcome=success"
+        "&prompt_template_name=architecture_review&prompt_template_version=7"
+        "&prompt_template_selection_mode=challenger_canary",
+        headers={"Authorization": "Bearer change-me"},
+    )
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert captured == {
+        "domain": "coding",
+        "approval_status": "approved",
+        "interaction_protocol": "rest",
+        "interaction_operation": "invoke_endpoint",
+        "interaction_outcome": "success",
+        "prompt_template_name": "architecture_review",
+        "prompt_template_version": 7,
+        "prompt_template_selection_mode": "challenger_canary",
+    }
+    assert payload[0]["interaction_protocols"] == ["rest"]
+    assert payload[0]["interaction_operations"] == ["invoke_endpoint"]
+    assert payload[0]["interaction_outcome"] == "success"
+    assert payload[0]["interaction_trace_count"] == 1
+    assert payload[0]["prompt_template_name"] == "architecture_review"
+    assert payload[0]["prompt_template_version"] == 7
+    assert payload[0]["prompt_template_selection_mode"] == "challenger_canary"
+    assert payload[0]["prompt_template_rollout_percentage"] == 15.0
