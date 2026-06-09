@@ -194,4 +194,4 @@ Important: application tables are not in `public` only. Inspect:
 - To operate the system visually, use [Operator Console](./operator-console.md)
 - To operate the system from the terminal, use [Admin CLI](./admin-cli.md)
 - To walk the learning loop end to end, use [First Training Workflow](./first-training-workflow.md)
-- To monitor live activity, use [Operations Monitoring](./operations-monitoring.md)
+- To monitor live activity, use the [Observability Guide](./operations-monitoring.md)

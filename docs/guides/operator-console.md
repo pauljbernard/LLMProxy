@@ -14,11 +14,11 @@ Default token:
 change-me
 ```
 
-## Panels
+## Main rooms
 
-### Overview
+### System
 
-Use this panel to:
+Use this room to:
 
 - verify health
 - inspect effective configuration
@@ -27,16 +27,16 @@ Use this panel to:
 
 ### Proxy
 
-Use this panel to:
+Use this room to:
 
 - run chat requests
 - run streamed chat requests when the resolved provider supports streaming
 - run ensemble requests
 - run embeddings
 - inspect request history
-- inspect full request detail including routing, model responses, candidates, and performance samples
+- inspect full request detail including routing, model responses, candidates, prompt lineage, and performance samples
 
-Current streaming-capable providers:
+Current streaming-capable providers include:
 
 - `openai`
 - `ollama`
@@ -48,20 +48,53 @@ Current streaming-capable providers:
 
 If a request resolves to a provider without streaming support, the proxy returns a clear `501` instead of silently buffering or downgrading the request.
 
-### Models & Deployment
+### Governance
 
-Use this panel to:
+Use this room to:
 
-- inspect available proxy models
-- inspect local registered packages
-- inspect routing policies
-- register a local model package
-- activate a model in `shadow`, `canary`, or `production`
-- roll back an active model
+- inspect virtual keys
+- review pricing policy
+- inspect guardrails
+- understand access scope and policy relationships
 
-### Candidates, Datasets & Training
+### Models
 
-Use this panel to:
+Use this room to:
+
+- inspect vendor LLM catalogs
+- inspect local runtime targets and custom packages
+- onboard vendor or package capacity
+- inspect and edit routing policies
+- inspect deployment state and route exposure
+
+Important model subviews:
+
+- `LLMs`
+- `Onboard`
+- `Routing`
+- `Deploy`
+
+### Integrations
+
+Use this room to:
+
+- inspect live MCP, A2A, and REST endpoint surfaces
+- review executable integration endpoints
+- inspect reference guides without mixing them with live endpoints
+
+### Prompt Library
+
+Use this room to:
+
+- inspect saved prompt families and versions
+- compare active and challenger prompt versions
+- run prompt canaries
+- promote challengers
+- inspect prompt usage metrics and rollout recommendations
+
+### Data Pipeline
+
+Use this room to:
 
 - review training candidates
 - approve or reject candidates
@@ -69,41 +102,52 @@ Use this panel to:
 - inspect exports
 - import datasets
 - inspect dataset imports and dataset versions
-- start training runs
-- inspect training runs
 
-### Evaluation & KPI
+### Training
 
-Use this panel to:
+Use this room to:
 
-- run evaluations for training runs
-- inspect evaluation runs
-- review KPI output
-- prepare approved evaluations for deployment
+- run training
+- inspect training runs and evaluations
+- review learning flow and runtime status
+- inspect KPI and studio/runtime oversight
 
-### Operations
+Important training subviews:
 
-Use this panel to:
+- `Runs & Evaluation`
+- `Runtime & KPI`
 
-- monitor runtime summary and metrics
-- inspect recent logs
-- inspect recent errors
-- inspect audit activity
-- review the live feed snapshot
+### Observability
 
-### Jobs & Events
+Use this room to:
 
-Use this panel to:
+- inspect the canonical event directory
+- inspect request traffic through the `Traffic` event preset inside `Events`
+- inspect routing/system topology
+- inspect provider and runtime readiness
+- inspect LLM performance time series and monitor configuration
 
-- inspect queued and completed jobs
-- retry or cancel jobs
-- inspect integration events
-- replay events
+Important observability subviews:
+
+- `Events`
+- `Topology`
+- `Readiness`
+
+### Runtime Control
+
+Use this room to:
+
+- inspect the job queue
+- inspect pending internal event backlog
+- retry, cancel, and process queued work
 - run worker and scheduler iterations manually
+
+Historical browsing lives primarily under `Observability > Events`; `Runtime Control` is for queue handling and execution control.
 
 ## Operator workflow tips
 
-- If a table looks empty, click the panel refresh button first.
+- If a table looks empty, click the room refresh button first.
 - If you recently changed the token, click `Check Connection` again.
-- Use the row action buttons instead of copying IDs manually when available.
-- Use the Operations panel while triggering actions in other panels to see live system effects.
+- Use row action buttons instead of copying IDs manually when available.
+- Use `Observability > Events` as the canonical operational directory, then pivot into request detail, jobs, routing, or prompt lineage from there.
+- Use `Observability > Readiness` for vendor/model health and time-series trends, not just `/health`.
