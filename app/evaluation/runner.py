@@ -8,6 +8,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api.virtual_keys import VirtualKeyCreateRequest, create_virtual_key_record
 from app.config import Settings
 from app.db.models import DatasetVersion, EvaluationRun, TrainingRun
 from app.evaluation.benchmark_loader import load_benchmarks
@@ -145,8 +146,27 @@ def execute_evaluation_run(
     )
     session.flush()
     session.commit()
+    evaluator_key_record, evaluator_raw_token = create_virtual_key_record(
+        session,
+        VirtualKeyCreateRequest(
+            display_name=f"evaluation-run:{evaluation_run.id}",
+            owner_id=evaluation_run.id,
+            role="automation",
+        ),
+    )
+    evaluation_run = session.get(EvaluationRun, evaluation_run_id)
+    if evaluation_run is not None:
+        evaluation_run.result_json = {
+            **dict(evaluation_run.result_json or {}),
+            "proxy_auth": {
+                "virtual_key_id": evaluator_key_record.id,
+                "key_prefix": evaluator_key_record.key_prefix,
+                "scope": ["evaluation", "judge", "synthetic_data"],
+            },
+        }
+        session.commit()
     try:
-        return run_evaluation(
+        result = run_evaluation(
             session,
             request=EvaluationRunRequest(
                 training_run_id=training_run.id,
@@ -154,12 +174,26 @@ def execute_evaluation_run(
             ),
             settings=settings,
             evaluation_run_id=evaluation_run.id,
+            proxy_base_url=settings.llmproxy_internal_api_base_url,
+            proxy_api_key=evaluator_raw_token,
+            proxy_auth_summary={
+                "virtual_key_id": evaluator_key_record.id,
+                "key_prefix": evaluator_key_record.key_prefix,
+                "scope": ["evaluation", "judge", "synthetic_data"],
+            },
         )
+        evaluator_key_record.status = "disabled"
+        session.commit()
+        return result
     except Exception as exc:
         evaluation_run = session.get(EvaluationRun, evaluation_run_id)
         if evaluation_run is not None:
             evaluation_run.status = "failed"
-            evaluation_run.result_json = {"error": str(exc)}
+            evaluation_run.result_json = {
+                **dict(evaluation_run.result_json or {}),
+                "error": str(exc),
+            }
+            evaluator_key_record.status = "disabled"
             emit_event(
                 session,
                 event_type="evaluation.failed",
@@ -180,6 +214,9 @@ def run_evaluation(
     request: EvaluationRunRequest,
     settings: Settings,
     evaluation_run_id: str | None = None,
+    proxy_base_url: str | None = None,
+    proxy_api_key: str | None = None,
+    proxy_auth_summary: dict[str, object] | None = None,
 ) -> EvaluationResult:
     training_run = session.get(TrainingRun, request.training_run_id)
     if training_run is None:
@@ -228,8 +265,24 @@ def run_evaluation(
             "benchmark_manifest": benchmark_manifest,
             "benchmark_records": benchmark_records,
             "frontier_baseline_name": baseline_name,
+            "proxy_auth": proxy_auth_summary
+            or {
+                "base_url": proxy_base_url,
+                "scope": ["evaluation", "judge", "synthetic_data"],
+            },
         },
         timeout_seconds=settings.llmproxy_evaluation_timeout_seconds,
+        extra_env={
+            key: value
+            for key, value in {
+                "LLMPROXY_BASE_URL": proxy_base_url or "",
+                "LLMPROXY_API_KEY": proxy_api_key or "",
+                "LLMPROXY_EVALUATION_RUN_ID": evaluation_run_id or "",
+                "LLMPROXY_TRAINING_RUN_ID": training_run.id,
+            }.items()
+            if value
+        }
+        or None,
     )
     overall_score = float(evaluation_backend_result["overall_score"])
     quality_delta_vs_frontier = round(frontier_score - overall_score, 4)

@@ -16,6 +16,50 @@ This guide gets a local `llmProxy` stack running, opens the operator UX, and ver
 From the repository root:
 
 ```bash
+./scripts/install-local-macos.sh
+```
+
+This is the canonical local bootstrap path on macOS. It creates `infra/compose/.env.local` if needed, picks up ignored local provider key files when present, builds the core stack, starts it, and waits for health.
+
+You can also choose an explicit service profile:
+
+```bash
+./scripts/install-local-macos.sh --profile core
+./scripts/install-local-macos.sh --profile training
+./scripts/install-local-macos.sh --profile full
+```
+
+If you also want the training services immediately and prefer the older flag:
+
+```bash
+./scripts/install-local-macos.sh --with-training
+```
+
+`--with-training` remains as a compatibility alias for `--profile full`.
+
+To print a local preflight plus the current live provider-readiness report:
+
+```bash
+./scripts/install-local-macos.sh --report
+```
+
+To emit the same report as JSON for automation:
+
+```bash
+./scripts/install-local-macos.sh --report --json
+```
+
+To let the installer bootstrap missing prerequisites when possible:
+
+```bash
+./scripts/install-local-macos.sh --install-deps
+```
+
+Rerunning the installer with a different profile reconciles the optional services to that profile.
+
+If you need the manual Compose path instead:
+
+```bash
 docker compose -f infra/compose/docker-compose.yml up -d
 ```
 
@@ -23,6 +67,54 @@ Check status:
 
 ```bash
 docker compose -f infra/compose/docker-compose.yml ps
+```
+
+To stop the stack later:
+
+```bash
+./scripts/stop-local-macos.sh
+```
+
+To stop it and emit JSON for automation:
+
+```bash
+./scripts/stop-local-macos.sh --json
+```
+
+To start it again later without rebuilding:
+
+```bash
+./scripts/start-local-macos.sh --profile core
+```
+
+To start it again and emit JSON for automation:
+
+```bash
+./scripts/start-local-macos.sh --profile core --json
+```
+
+To inspect lifecycle state and current provider readiness:
+
+```bash
+./scripts/status-local-macos.sh
+```
+
+To tear it down completely:
+
+```bash
+./scripts/teardown-local-macos.sh
+```
+
+To tear it down and emit JSON for automation:
+
+```bash
+./scripts/teardown-local-macos.sh --json
+```
+
+To partially tear down a profile:
+
+```bash
+./scripts/teardown-local-macos.sh --profile training
 ```
 
 ## Verify health

@@ -1,11 +1,14 @@
 """Deployment endpoints."""
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import Any
+
+from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import get_runtime_settings, get_session, require_api_token, require_operator_token
+from app.api.dependencies import get_runtime_settings, get_session, require_api_token, require_operator_token, require_platform_listener
 from app.config import Settings
-from app.deployment.manager import delete_policy_entry, deploy_model, list_routing_policies, rollback_model, upsert_frontier_policy_entry
+from app.deployment.manager import delete_policy_entry, deploy_model, list_local_deployment_inventory, list_routing_policies, rollback_model, upsert_frontier_policy_entry
 from app.schemas.integration import (
     DeploymentRequest,
     DeploymentResponse,
@@ -13,9 +16,14 @@ from app.schemas.integration import (
     RoutingPolicyEntryMutationResponse,
     RoutingPolicyVersionView,
 )
+from app.services.ollama_runtime import pull_ollama_model, reconcile_ollama_runtime
 from app.services.observability import log_record
 
-router = APIRouter(prefix="/deployment", tags=["deployment"])
+router = APIRouter(prefix="/deployment", tags=["deployment"], dependencies=[Depends(require_platform_listener)])
+
+
+class OllamaPullRequest(BaseModel):
+    model: str
 
 
 @router.post(
@@ -68,6 +76,66 @@ def rollback(
         category="audit",
         message="Model rolled back",
         data={"model_alias": model_alias},
+        audit=True,
+    )
+    return response
+
+
+@router.get(
+    "/models/local-inventory",
+    dependencies=[Depends(require_api_token)],
+)
+def list_local_deployments(
+    paginated: bool = False,
+    limit: int = Query(default=20, le=200),
+    offset: int = Query(default=0, ge=0),
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_runtime_settings),
+) -> list[dict[str, object]] | dict[str, Any]:
+    rows = list_local_deployment_inventory(session, settings=settings)
+    if not paginated:
+        return rows
+    return {
+        "items": rows[offset:offset + limit],
+        "total": len(rows),
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@router.get(
+    "/runtimes/ollama/reconcile",
+    dependencies=[Depends(require_api_token)],
+)
+def reconcile_ollama(
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_runtime_settings),
+) -> dict[str, object]:
+    try:
+        return reconcile_ollama_runtime(session, settings=settings)
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+
+@router.post(
+    "/runtimes/ollama/pull",
+    dependencies=[Depends(require_operator_token)],
+)
+def pull_ollama(
+    request: OllamaPullRequest,
+    settings: Settings = Depends(get_runtime_settings),
+) -> dict[str, object]:
+    try:
+        response = pull_ollama_model(settings=settings, model_name=request.model)
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    log_record(
+        settings,
+        level="INFO",
+        component="deployment",
+        category="audit",
+        message="Ollama model pull requested",
+        data={"model": request.model},
         audit=True,
     )
     return response

@@ -8,7 +8,7 @@ import httpx
 
 from app.services.cost import estimate_cost_usd
 from app.schemas.chat import ChatCompletionRequest
-from app.schemas.provider import ProviderCapability
+from app.schemas.provider import ProviderCapability, ProviderRequestShape
 
 
 class ProviderConfigurationError(RuntimeError):
@@ -45,7 +45,12 @@ class BaseProvider(ABC):
             supports_tools=self.supports_tools,
             max_context_tokens=128_000,
             max_output_tokens=8_192,
+            request_shape=self.request_shape,
         )
+
+    @property
+    def request_shape(self) -> ProviderRequestShape:
+        return ProviderRequestShape()
 
     @staticmethod
     def _join_messages(messages: Sequence[object]) -> str:
@@ -138,6 +143,9 @@ class BaseProvider(ABC):
             "model": self.model_id,
             "detail": "health check not implemented",
         }
+
+    async def list_models(self) -> list[ProviderCapability]:
+        return [self.capability]
 
     async def invoke(self, request: ChatCompletionRequest) -> dict[str, object]:
         started_at = perf_counter()

@@ -5,8 +5,16 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from app.config import Settings
 
-def deploy_to_llama_cpp(*, model_alias: str, model_package: dict[str, object], models_root: Path) -> dict[str, object]:
+
+def deploy_to_llama_cpp(
+    *,
+    model_alias: str,
+    model_package: dict[str, object],
+    models_root: Path,
+    settings: Settings,
+) -> dict[str, object]:
     deployment_dir = models_root / model_alias
     deployment_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = deployment_dir / "deployment-llama-cpp.json"
@@ -14,7 +22,7 @@ def deploy_to_llama_cpp(*, model_alias: str, model_package: dict[str, object], m
         "model_alias": model_alias,
         "runtime": "llama_cpp",
         "status": "deployed",
-        "endpoint_url": "http://localhost:8080",
+        "endpoint_url": settings.llmproxy_llama_cpp_base_url,
         "artifact_paths": model_package.get("artifact_paths", []),
     }
     manifest_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")

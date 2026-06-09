@@ -1,5 +1,6 @@
 """Model and provider registry helpers."""
 
+import asyncio
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -53,6 +54,20 @@ def _normalize_openai_compatible_base_url(endpoint_url: str) -> str:
     if parsed.path in {"", "/"}:
         return endpoint_url.rstrip("/") + "/v1"
     return endpoint_url.rstrip("/")
+
+
+def _runtime_base_url_from_settings(settings: Settings, runtime: str) -> str:
+    if runtime == "ollama":
+        return settings.llmproxy_ollama_base_url
+    if runtime == "vllm":
+        return settings.llmproxy_vllm_base_url
+    if runtime == "llama_cpp":
+        return settings.llmproxy_llama_cpp_base_url
+    if runtime == "mlx":
+        return settings.llmproxy_mlx_base_url
+    if runtime == "tgi":
+        return settings.llmproxy_huggingface_tgi_base_url
+    return settings.llmproxy_ollama_base_url
 
 
 def get_provider_registry(settings: Settings, session=None) -> dict[str, object]:
@@ -109,7 +124,7 @@ def resolve_provider(
 
     if entry_kind == "local":
         runtime = str(entry.get("runtime", "ollama"))
-        endpoint_url = str(entry.get("endpoint_url") or settings.llmproxy_ollama_base_url)
+        endpoint_url = str(entry.get("endpoint_url") or _runtime_base_url_from_settings(settings, runtime))
         if runtime == "ollama":
             return OllamaProvider(
                 model_id,
@@ -271,6 +286,29 @@ def list_proxy_models(settings: Settings, session=None, *, allowed_models: set[s
     return models
 
 
+async def list_proxy_models_async(settings: Settings, session=None, *, allowed_models: set[str] | None = None) -> list[dict[str, str]]:
+    models: list[dict[str, str]] = [
+        {"id": "proxy-auto", "object": "model"},
+        {"id": "proxy-local", "object": "model"},
+        {"id": "proxy-teacher", "object": "model"},
+    ]
+    seen = {item["id"] for item in models}
+    for capability in await list_provider_capabilities_async(settings, session=session, allowed_models=allowed_models):
+        model_id = capability.model_id
+        if model_id in seen:
+            continue
+        seen.add(model_id)
+        models.append({"id": model_id, "object": "model"})
+    for manifest in list_model_packages(Path(settings.llmproxy_models_path)):
+        model_alias = str(manifest["model_alias"])
+        if model_alias in seen:
+            continue
+        if _is_model_visible(model_alias, allowed_models):
+            seen.add(model_alias)
+            models.append({"id": model_alias, "object": "model"})
+    return models
+
+
 def list_provider_capabilities(
     settings: Settings,
     session=None,
@@ -283,4 +321,33 @@ def list_provider_capabilities(
         if not _is_model_visible(capability.model_id, allowed_models):
             continue
         capabilities.append(capability)
+    return capabilities
+
+
+async def list_provider_capabilities_async(
+    settings: Settings,
+    session=None,
+    *,
+    allowed_models: set[str] | None = None,
+) -> list[ProviderCapability]:
+    capabilities: list[ProviderCapability] = []
+    providers = list(get_provider_registry(settings, session=session).values())
+    discovered = await asyncio.gather(
+        *(provider.list_models() for provider in providers),
+        return_exceptions=True,
+    )
+    seen: set[tuple[str, str]] = set()
+    for provider, result in zip(providers, discovered, strict=False):
+        if isinstance(result, Exception):
+            provider_capabilities = [provider.capability]
+        else:
+            provider_capabilities = list(result) or [provider.capability]
+        for capability in provider_capabilities:
+            if not _is_model_visible(capability.model_id, allowed_models):
+                continue
+            key = (capability.provider_name, capability.model_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            capabilities.append(capability)
     return capabilities

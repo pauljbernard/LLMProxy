@@ -25,6 +25,12 @@ def test_health() -> None:
     assert "vertex_ai" in payload["provider_families_configured"]
     assert "provider_ping" in payload
     assert "openai" in payload["provider_ping"]
+    assert "provider_readiness" in payload
+    assert isinstance(payload["provider_readiness"], list)
+    assert any(item["provider_key"] == "openai" for item in payload["provider_readiness"])
+    openai_row = next(item for item in payload["provider_readiness"] if item["provider_key"] == "openai")
+    assert "models" in openai_row
+    assert isinstance(openai_row["models"], list)
     assert "logs_path" in payload
 
 

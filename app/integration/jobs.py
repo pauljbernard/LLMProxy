@@ -92,6 +92,7 @@ def enqueue_training_run_job(session: Session, *, training_run_id: str) -> JobQu
         job_type="training.run",
         payload={"training_run_id": training_run_id},
         dedupe_key=("training_run_id", training_run_id),
+        max_attempts=1,
     )
 
 

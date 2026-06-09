@@ -62,14 +62,33 @@ class ToolCall(BaseModel):
 
 class RequestMetadata(BaseModel):
     session_id: str = Field(default_factory=lambda: f"sess_{uuid4().hex}")
+    listener_id: str | None = None
+    listener_host: str | None = None
+    listener_port: int | None = None
     domain_hint: str | None = None
     task_type_hint: str | None = None
     privacy_hint: bool | None = None
     region_hint: str | None = None
     route_tags: list[str] = Field(default_factory=list)
+    traffic_origin: str | None = None
+    automation_scope: str | None = None
+    automation_owner_id: str | None = None
+    virtual_key_id: str | None = None
+    virtual_key_role: str | None = None
+    root_request_id: str | None = None
+    parent_request_id: str | None = None
+    upstream_node_id: str | None = None
+    topology_path: list[str] = Field(default_factory=list)
+    routed_pool_id: str | None = None
+    routed_node_id: str | None = None
+    forwarded_by_proxy: bool = False
     prompt_template_name: str | None = None
     prompt_template_version: int | None = None
     prompt_template_variables: dict[str, object] = Field(default_factory=dict)
+    prompt_template_render_hash: str | None = None
+    prompt_template_model_override: str | None = None
+    prompt_template_selection_mode: str | None = None
+    prompt_template_rollout_percentage: float | None = None
 
 
 class ChatCompletionRequest(BaseModel):
@@ -236,6 +255,47 @@ class CompletionResponse(BaseModel):
     model: str
     choices: list[CompletionChoice]
     usage: UsageInfo
+
+
+class AnthropicToolSpec(BaseModel):
+    name: str
+    description: str | None = None
+    input_schema: dict[str, object] = Field(default_factory=dict)
+
+
+class AnthropicToolChoice(BaseModel):
+    type: str
+    name: str | None = None
+
+
+class AnthropicRequestMetadata(BaseModel):
+    user_id: str | None = None
+
+
+class AnthropicInputMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str | list[dict[str, object]]
+
+
+class AnthropicMessagesRequest(BaseModel):
+    model: str
+    messages: list[AnthropicInputMessage]
+    max_tokens: int
+    system: str | list[dict[str, object]] | None = None
+    stream: bool = False
+    temperature: float | None = None
+    top_p: float | None = None
+    stop_sequences: list[str] | None = None
+    metadata: AnthropicRequestMetadata | None = None
+    tools: list[AnthropicToolSpec] | None = None
+    tool_choice: AnthropicToolChoice | None = None
+    prompt_template_name: str | None = None
+    prompt_template_version: int | None = None
+    prompt_template_variables: dict[str, object] = Field(default_factory=dict)
+
+
+class AnthropicCountTokensResponse(BaseModel):
+    input_tokens: int
 
 
 class ImageGenerationRequest(BaseModel):

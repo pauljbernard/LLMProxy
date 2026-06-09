@@ -17,6 +17,14 @@ def build_routing_decision(
     predicted_latency_class: str,
     ranked_alternatives: list[RankedAlternative],
     fallback_chain: list[FallbackTarget],
+    selected_entry_id: str | None = None,
+    selected_pool_id: str | None = None,
+    selected_node_id: str | None = None,
+    selected_node_role: str | None = None,
+    selected_node_labels: list[str] | None = None,
+    selected_capacity_class: str | None = None,
+    selected_balancing_strategy: str | None = None,
+    selected_affinity_key: str | None = None,
 ) -> RoutingDecision:
     return RoutingDecision(
         routing_decision_id=f"route_{request_id.split('_', 1)[-1]}",
@@ -32,4 +40,12 @@ def build_routing_decision(
         predicted_cost_class=predicted_cost_class,
         predicted_latency_class=predicted_latency_class,
         fallback_chain=fallback_chain,
+        selected_entry_id=selected_entry_id,
+        selected_pool_id=selected_pool_id,
+        selected_node_id=selected_node_id,
+        selected_node_role=selected_node_role,
+        selected_node_labels=selected_node_labels or [],
+        selected_capacity_class=selected_capacity_class,
+        selected_balancing_strategy=selected_balancing_strategy,
+        selected_affinity_key=selected_affinity_key,
     )

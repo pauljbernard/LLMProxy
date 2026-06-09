@@ -42,6 +42,37 @@ def test_list_local_model_packages_returns_manifests(tmp_path: Path, monkeypatch
     assert payload[0]["promotion_status"] == "approved"
 
 
+def test_list_local_model_packages_supports_paginated_payload(tmp_path: Path) -> None:
+    from app.api.dependencies import get_runtime_settings
+    from app.config import Settings
+
+    for index in range(3):
+        package_dir = tmp_path / f"train_{index}"
+        package_dir.mkdir(parents=True, exist_ok=True)
+        manifest = {
+            "model_registry_id": f"model_train_{index}",
+            "model_alias": f"coding-lora-train_{index}",
+            "base_model": "Qwen/Qwen2.5-Coder-7B-Instruct",
+            "adapter_type": "lora",
+            "artifact_paths": ["/tmp/adapter.bin"],
+            "domains": ["coding"],
+            "quality_summary": {"promotion_status": "approved"},
+        }
+        (package_dir / "model-package.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    app.dependency_overrides[get_runtime_settings] = lambda: Settings(llmproxy_models_path=str(tmp_path))
+    client = TestClient(app)
+    response = client.get("/models/local?paginated=true&limit=1&offset=1", headers={"Authorization": "Bearer change-me"})
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 3
+    assert payload["limit"] == 1
+    assert payload["offset"] == 1
+    assert len(payload["items"]) == 1
+
+
 def test_list_models_filters_results_for_restricted_virtual_key(monkeypatch, tmp_path: Path) -> None:
     from app.api.dependencies import get_runtime_settings, require_api_token
     from app.config import Settings

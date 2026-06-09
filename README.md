@@ -40,9 +40,126 @@ Recommended starting points:
 - [Operations Monitoring](./docs/guides/operations-monitoring.md)
 - [First Training Workflow](./docs/guides/first-training-workflow.md)
 - [Backend Command Integration](./docs/guides/backend-command-integration.md)
+- [Claude Code Gateway](./docs/guides/claude-code-gateway.md)
 - [Troubleshooting](./docs/guides/troubleshooting.md)
 - [Configuration Reference](./docs/reference/configuration.md)
 - [API Usage](./docs/reference/api-usage.md)
+
+## Local Install On macOS
+
+For a fresh local checkout on macOS with Docker Desktop, the canonical bootstrap path is:
+
+```bash
+./scripts/install-local-macos.sh
+```
+
+What it does:
+
+- verifies you are on macOS
+- verifies Docker Desktop is available and ready
+- creates `infra/compose/.env.local` if it does not exist
+- automatically picks up ignored local secrets from:
+  - `openai-api.key`
+  - `anthropic-api.key`
+- builds and starts the selected local Compose profile
+- waits for the API health endpoint to become ready
+- can install missing prerequisites when invoked with `--install-deps`
+
+Available install profiles:
+
+```bash
+./scripts/install-local-macos.sh --profile core
+./scripts/install-local-macos.sh --profile training
+./scripts/install-local-macos.sh --profile full
+```
+
+Profile behavior:
+
+- `core`: `postgres`, `redis`, `jaeger`, `api`, `worker`, `scheduler`
+- `training`: `core` plus `training-worker`
+- `full`: `training` plus `unsloth-studio`
+
+If you also want the training services on first boot:
+
+```bash
+./scripts/install-local-macos.sh --with-training
+```
+
+`--with-training` remains as a compatibility alias for `--profile full`.
+
+To print a packaging preflight and current live provider-readiness report:
+
+```bash
+./scripts/install-local-macos.sh --report
+```
+
+To emit the same report as machine-readable JSON:
+
+```bash
+./scripts/install-local-macos.sh --report --json
+```
+
+To let the installer bootstrap missing prerequisites when possible:
+
+```bash
+./scripts/install-local-macos.sh --install-deps
+```
+
+Rerunning the installer with a different profile reconciles the optional services to that profile.
+
+To stop the local stack:
+
+```bash
+./scripts/stop-local-macos.sh
+```
+
+To stop it and emit a machine-readable result:
+
+```bash
+./scripts/stop-local-macos.sh --json
+```
+
+To start a previously stopped stack without rebuilding:
+
+```bash
+./scripts/start-local-macos.sh --profile core
+```
+
+To start it and emit a machine-readable result:
+
+```bash
+./scripts/start-local-macos.sh --profile core --json
+```
+
+To inspect current lifecycle state, provider readiness, and exposed local URLs:
+
+```bash
+./scripts/status-local-macos.sh
+```
+
+To tear the stack down:
+
+```bash
+./scripts/teardown-local-macos.sh
+```
+
+To tear it down and emit a machine-readable result:
+
+```bash
+./scripts/teardown-local-macos.sh --json
+```
+
+To partially tear down just the training profile:
+
+```bash
+./scripts/teardown-local-macos.sh --profile training
+```
+
+To tear the full stack down and remove Compose volumes:
+
+```bash
+./scripts/teardown-local-macos.sh --profile full --volumes
+```
 
 ## Operator CLI
 
@@ -83,7 +200,7 @@ Configuration file updates can be written to an env file directly:
 python3 -m app.cli config set LLMPROXY_OPENAI_API_KEY your-key-here --env-file .env.local
 ```
 
-To validate the local stack with Compose, start the services and then use the CLI against the running environment:
+To validate the local stack with Compose manually, start the services and then use the CLI against the running environment:
 
 ```bash
 docker compose -f infra/compose/docker-compose.yml up -d --no-build

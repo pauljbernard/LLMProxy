@@ -10,6 +10,7 @@ from app.config import Settings
 from app.proxy.candidates import capture_training_candidate
 from app.proxy.judge import judge_response
 from app.proxy.recorder import record_judge_critique, record_model_response
+from app.services.interaction_traces import summarize_interaction_trace_protocols
 from app.registry.model_registry import get_provider_registry
 from app.services.cost import estimate_cost_usd
 from app.services.observability import log_record
@@ -134,6 +135,61 @@ async def run_teacher_ensemble(
         raise RuntimeError("Judge selected a response ID that does not match any teacher candidate.")
 
     def _persist_judge(sync_session):
+        interaction_traces = [
+            {
+                "trace_id": f"trace_llm_{candidate.response_id}",
+                "protocol": "llm",
+                "operation": "chat_completion",
+                "source": "llmproxy",
+                "request_id": request_log_id,
+                "response_id": candidate.response_id,
+                "session_id": request.metadata.session_id,
+                "success": True,
+                "provider": candidate.provider,
+                "provider_family": candidate.provider_family,
+                "model": candidate.model,
+                "response_role": "teacher_candidate",
+                "request_payload": {
+                    "requested_model": request.model,
+                    "messages": [message.model_dump(mode="json") for message in request.messages],
+                    "metadata": request.metadata.model_dump(mode="json"),
+                },
+                "response_payload": {
+                    "content": candidate.content,
+                    "finish_reason": "stop",
+                },
+                "metrics": {},
+            }
+            for candidate in teacher_candidates
+        ]
+        interaction_traces.append(
+            {
+                "trace_id": f"trace_llm_judge_{request_log_id}",
+                "protocol": "llm",
+                "operation": "selection_judge",
+                "source": "llmproxy",
+                "request_id": request_log_id,
+                "response_id": critique.selected_response_id,
+                "session_id": request.metadata.session_id,
+                "success": True,
+                "provider": critique.judge_provider,
+                "provider_family": critique.judge_provider,
+                "model": critique.judge_model,
+                "response_role": "judge",
+                "request_payload": {
+                    "candidate_ids": [candidate.response_id for candidate in teacher_candidates],
+                    "domain": request.metadata.domain_hint or "general",
+                },
+                "response_payload": {
+                    "selected_response_id": critique.selected_response_id,
+                    "selected_provider": critique.selected_provider,
+                    "selected_model": critique.selected_model,
+                    "scores": critique.scores,
+                    "rationale": critique.rationale,
+                },
+                "metrics": {},
+            }
+        )
         record_judge_critique(
             sync_session,
             request_log_id=request_log_id,
@@ -162,6 +218,8 @@ async def run_teacher_ensemble(
                 "teacher_models": [candidate.model for candidate in teacher_candidates],
                 "judge_model": critique.judge_model,
                 "created_at": datetime.now(timezone.utc).isoformat(),
+                "interaction_traces": interaction_traces,
+                "interaction_protocols": summarize_interaction_trace_protocols(interaction_traces),
             },
             validation={
                 "validated": True,

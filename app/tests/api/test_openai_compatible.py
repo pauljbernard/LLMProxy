@@ -1,16 +1,23 @@
+import asyncio
 import httpx
+import json
 from datetime import datetime, timezone
 from decimal import Decimal
+from fastapi import Response
 from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
 
 from app.api import openai_compatible
 from app.api.dependencies import get_async_session, get_session, virtual_key_hash
-from app.db.models import VirtualAPIKey
+from app.config import Settings
+from app.db.models import RequestLog, TrainingCandidate, VirtualAPIKey
 from app.providers.anthropic_provider import AnthropicProvider
 from app.providers.google_provider import GoogleProvider
 from app.providers.ollama import OllamaProvider
 from app.providers.openai_provider import OpenAIProvider
+from app.schemas.chat import ChatCompletionRequest
+from app.schemas.provider import ProviderCapability
+from app.schemas.routing import FallbackTarget
 from app.main import app
 
 
@@ -91,13 +98,62 @@ def test_list_models_returns_proxy_and_provider_models() -> None:
     assert response.status_code == 200
     payload = response.json()
     model_ids = {item["id"] for item in payload}
+    settings = Settings()
     assert "proxy-auto" in model_ids
-    assert "qwen2.5-coder:14b" in model_ids
+    assert settings.llmproxy_ollama_model in model_ids
     assert "gpt-5.5" in model_ids
     assert "claude-3-5-sonnet" in model_ids
     assert "gemini-2.5-pro" in model_ids
     assert "grok-3-mini" in model_ids
     assert len(payload) == len(model_ids)
+
+
+def test_resolve_route_and_registry_passes_discovered_provider_hint(monkeypatch) -> None:
+    request = ChatCompletionRequest.model_validate(
+        {
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "Use the discovered OpenAI model directly"}],
+            "metadata": {"session_id": "sess_discovered_hint", "domain_hint": "general"},
+        }
+    )
+    captured: dict[str, object] = {}
+    registry = {"openai": object()}
+
+    async def fake_list_provider_capabilities_async(settings, session=None, *, allowed_models=None):
+        assert allowed_models == {"gpt-4o"}
+        return [
+            ProviderCapability(
+                provider_family="OpenAI",
+                provider_name="openai",
+                model_id="gpt-4o",
+                supports_streaming=True,
+                supports_tools=True,
+            )
+        ]
+
+    def fake_select_route(request_id, request, classification, settings, session=None, requested_model_provider_key=None):
+        captured["request_id"] = request_id
+        captured["requested_model_provider_key"] = requested_model_provider_key
+        return {"selected": "route"}
+
+    monkeypatch.setattr(openai_compatible, "list_provider_capabilities_async", fake_list_provider_capabilities_async)
+    monkeypatch.setattr(openai_compatible, "select_route", fake_select_route)
+    monkeypatch.setattr(openai_compatible, "get_provider_registry", lambda settings, session=None: registry)
+
+    selected_route, provider_registry = asyncio.run(
+        openai_compatible._resolve_route_and_registry(
+            FakeAsyncSession(FakeSession()),
+            request_id="req_discovered_hint",
+            request=request,
+            classification=openai_compatible.classify_request(request),
+            settings=Settings(),
+        )
+    )
+
+    assert selected_route == {"selected": "route"}
+    assert provider_registry is registry
+    assert captured["request_id"] == "req_discovered_hint"
+    assert captured["requested_model_provider_key"] == "openai"
 
 
 def test_chat_completions_rejects_requests_when_rpm_limit_is_exceeded(monkeypatch) -> None:
@@ -291,7 +347,7 @@ def test_public_virtual_key_endpoints_support_lifecycle() -> None:
 
 
 def test_completions_endpoint_translates_to_chat(monkeypatch) -> None:
-    async def fake_chat_completions(request, session, rate_limit_session, settings, principal):
+    async def fake_chat_completions(request, http_request, session, rate_limit_session, settings, principal):
         assert request.messages[0].content == "Write a haiku"
         return openai_compatible.ChatCompletionResponse.from_request(
             request,
@@ -316,7 +372,7 @@ def test_completions_endpoint_translates_to_chat(monkeypatch) -> None:
 
 
 def test_completions_endpoint_streams_sse(monkeypatch) -> None:
-    async def fake_chat_completions(request, session, rate_limit_session, settings, principal):
+    async def fake_chat_completions(request, http_request, session, rate_limit_session, settings, principal):
         async def event_stream():
             yield (
                 'data: {"id":"chatcmpl_stream","object":"chat.completion.chunk","created":1,"model":"gpt-5.5",'
@@ -349,6 +405,164 @@ def test_completions_endpoint_streams_sse(monkeypatch) -> None:
     assert '"text": "Hello "' in payload
     assert '"text": "world"' in payload
     assert "data: [DONE]" in payload
+
+
+def test_anthropic_messages_returns_anthropic_shape(monkeypatch) -> None:
+    async def fake_chat_completions(request, http_request, cache_control, session, rate_limit_session, settings, principal):
+        payload = {
+            "id": "chatcmpl_tools",
+            "object": "chat.completion",
+            "created": 1,
+            "model": "claude-3-5-sonnet",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": "call_1",
+                                "type": "function",
+                                "function": {"name": "lookup", "arguments": "{\"id\":1}"},
+                            }
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+            "usage": {"prompt_tokens": 14, "completion_tokens": 3, "total_tokens": 17},
+        }
+        return Response(content=json.dumps(payload), media_type="application/json")
+
+    monkeypatch.setattr(openai_compatible, "chat_completions", fake_chat_completions)
+    client = TestClient(app)
+    response = client.post(
+        "/v1/messages",
+        headers={"Authorization": "Bearer change-me", "anthropic-version": "2023-06-01"},
+        json={
+            "model": "claude-3-5-sonnet",
+            "max_tokens": 256,
+            "messages": [{"role": "user", "content": "Look up record 1."}],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["type"] == "message"
+    assert payload["id"] == "msg_tools"
+    assert payload["content"][0]["type"] == "tool_use"
+    assert payload["content"][0]["name"] == "lookup"
+    assert payload["stop_reason"] == "tool_use"
+    assert payload["usage"]["input_tokens"] == 14
+
+
+def test_anthropic_messages_count_tokens() -> None:
+    client = TestClient(app)
+    response = client.post(
+        "/v1/messages/count_tokens",
+        headers={"Authorization": "Bearer change-me"},
+        json={
+            "model": "claude-3-5-sonnet",
+            "max_tokens": 256,
+            "system": "Be concise.",
+            "messages": [{"role": "user", "content": "Explain bounded contexts."}],
+            "tools": [
+                {
+                    "name": "lookup",
+                    "description": "Find a record.",
+                    "input_schema": {"type": "object", "properties": {"id": {"type": "integer"}}},
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["input_tokens"] > 0
+
+
+def test_anthropic_messages_streams_anthropic_sse(monkeypatch) -> None:
+    async def fake_chat_completions(request, http_request, cache_control, session, rate_limit_session, settings, principal):
+        async def event_stream():
+            yield (
+                'data: {"id":"chatcmpl_stream","object":"chat.completion.chunk","created":1,"model":"claude-3-5-sonnet",'
+                '"choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}\n\n'
+            ).encode("utf-8")
+            yield (
+                'data: {"id":"chatcmpl_stream","object":"chat.completion.chunk","created":1,"model":"claude-3-5-sonnet",'
+                '"choices":[{"index":0,"delta":{"content":"Hello "},"finish_reason":null}]}\n\n'
+            ).encode("utf-8")
+            yield (
+                'data: {"id":"chatcmpl_stream","object":"chat.completion.chunk","created":1,"model":"claude-3-5-sonnet",'
+                '"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{\\"id\\":1}"}}]},"finish_reason":"tool_calls"}],'
+                '"usage":{"prompt_tokens":11,"completion_tokens":2}}\n\n'
+            ).encode("utf-8")
+            yield b"data: [DONE]\n\n"
+
+        return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+    monkeypatch.setattr(openai_compatible, "chat_completions", fake_chat_completions)
+    client = TestClient(app)
+    with client.stream(
+        "POST",
+        "/v1/messages",
+        headers={"Authorization": "Bearer change-me", "anthropic-version": "2023-06-01"},
+        json={
+            "model": "claude-3-5-sonnet",
+            "max_tokens": 256,
+            "stream": True,
+            "messages": [{"role": "user", "content": "Hello"}],
+        },
+    ) as response:
+        payload = response.read().decode("utf-8")
+
+    assert response.status_code == 200
+    assert "event: message_start" in payload
+    assert '"type": "text_delta"' in payload
+    assert '"type": "tool_use"' in payload
+    assert '"type": "input_json_delta"' in payload
+    assert '"stop_reason": "tool_use"' in payload
+
+
+def test_anthropic_messages_forward_prompt_template_metadata(monkeypatch) -> None:
+    async def fake_chat_completions(request, http_request, cache_control, session, rate_limit_session, settings, principal):
+        assert request.metadata.prompt_template_name == "architecture_review"
+        assert request.metadata.prompt_template_version == 2
+        assert request.metadata.prompt_template_variables == {"service_name": "billing"}
+        payload = {
+            "id": "chatcmpl_prompt_meta",
+            "object": "chat.completion",
+            "created": 1,
+            "model": "claude-sonnet-4-6",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "Ready.", "tool_calls": None},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 3, "total_tokens": 13},
+        }
+        return Response(content=json.dumps(payload), media_type="application/json")
+
+    monkeypatch.setattr(openai_compatible, "chat_completions", fake_chat_completions)
+    client = TestClient(app)
+    response = client.post(
+        "/v1/messages",
+        headers={"Authorization": "Bearer change-me", "anthropic-version": "2023-06-01"},
+        json={
+            "model": "claude-sonnet-4-6",
+            "max_tokens": 128,
+            "prompt_template_name": "architecture_review",
+            "prompt_template_version": 2,
+            "prompt_template_variables": {"service_name": "billing"},
+            "messages": [{"role": "user", "content": "Use the prompt template."}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["type"] == "message"
 
 
 def test_chat_completions_applies_prompt_template_and_model_override(monkeypatch) -> None:
@@ -385,19 +599,28 @@ def test_chat_completions_applies_prompt_template_and_model_override(monkeypatch
     )
     monkeypatch.setattr(
         openai_compatible,
-        "render_prompt_template",
-        lambda session, name, version=None, variables=None: (
-            type(
-                "PromptTemplateRecord",
-                (),
-                {
-                    "name": name,
-                    "version": version or 1,
-                    "model_override": "proxy-local",
-                },
-            )(),
-            f"Template for {variables['service_name']}",
-        ),
+        "resolve_runtime_prompt_template",
+        lambda session, name, version=None, selection_key=None: type(
+            "PromptTemplateResolution",
+            (),
+            {
+                "record": type(
+                    "PromptTemplateRecord",
+                    (),
+                    {
+                        "name": name,
+                        "version": version or 1,
+                        "template_text": "Template for {service_name}",
+                        "model_override": "proxy-local",
+                    },
+                )(),
+                "selection_mode": "active",
+                "active_version": 1,
+                "challenger_version": None,
+                "rollout_mode": "disabled",
+                "rollout_percentage": 0.0,
+            },
+        )(),
     )
 
     fake_session = FakeSession()
@@ -426,6 +649,27 @@ def test_chat_completions_applies_prompt_template_and_model_override(monkeypatch
     assert captured_messages[0].role == "system"
     assert captured_messages[0].content == "Template for billing"
     assert captured_messages[1].content == "Review the billing path."
+    request_rows = [item for item in fake_session.items if isinstance(item, RequestLog)]
+    candidate_rows = [item for item in fake_session.items if isinstance(item, TrainingCandidate)]
+    assert len(request_rows) == 1
+    assert len(candidate_rows) == 1
+    request_row = request_rows[0]
+    candidate_row = candidate_rows[0]
+    assert request_row.requested_model == "proxy-auto"
+    assert request_row.request_json["model"] == "proxy-auto"
+    assert request_row.effective_request_json["model"] == "proxy-local"
+    assert request_row.effective_request_json["messages"][0]["role"] == "system"
+    assert request_row.effective_request_json["messages"][0]["content"] == "Template for billing"
+    assert request_row.effective_request_json["metadata"]["prompt_template_name"] == "architecture_review"
+    assert request_row.effective_request_json["metadata"]["prompt_template_version"] == 1
+    assert request_row.effective_request_json["metadata"]["prompt_template_model_override"] == "proxy-local"
+    assert len(str(request_row.effective_request_json["metadata"]["prompt_template_render_hash"])) == 64
+    assert candidate_row.metadata_json["requested_model"] == "proxy-auto"
+    assert candidate_row.metadata_json["effective_model"] == "proxy-local"
+    assert candidate_row.metadata_json["prompt_template_name"] == "architecture_review"
+    assert candidate_row.metadata_json["prompt_template_version"] == 1
+    assert candidate_row.metadata_json["prompt_template_variables"] == {"service_name": "billing"}
+    assert candidate_row.metadata_json["prompt_template_model_override"] == "proxy-local"
 
 
 def test_image_generations_endpoint(monkeypatch) -> None:
@@ -1137,6 +1381,75 @@ def test_chat_completions_streams_when_selected_provider_not_in_registry(monkeyp
     assert "data: [DONE]" in payload
 
 
+def test_chat_completions_streams_error_event_when_stream_fails_after_start(monkeypatch) -> None:
+    from fastapi import HTTPException
+
+    from app.api import openai_compatible
+    from app.api.dependencies import get_async_session
+
+    class FakeDecision:
+        def __init__(self) -> None:
+            self.routing_decision_id = "route_stream_failure"
+            self.session_id = "sess_stream_failure"
+            self.policy_version = "test-policy"
+            self.selected_provider = "openai"
+            self.selected_provider_family = "OpenAI"
+            self.selected_model = "gpt-5.5"
+            self.selected_mode = "production"
+            self.decision_rationale = "primary"
+            self.predicted_cost_class = "medium"
+            self.predicted_latency_class = "medium"
+            self.ranked_alternatives = []
+            self.fallback_chain = []
+
+    class FakeRoute:
+        def __init__(self) -> None:
+            self.provider_key = "openai"
+            self.decision = FakeDecision()
+            self.shadow_provider_keys = []
+
+    class FakeStreamingProvider:
+        supports_streaming = True
+
+    async def fake_stream_with_fallback(settings, provider_registry, selected_route, request):
+        if False:
+            yield ({}, selected_route.decision)
+        raise HTTPException(
+            status_code=502,
+            detail="No streaming-capable provider in the selected route or fallback chain succeeded.",
+        )
+
+    async def fake_resolve_route_and_registry(*args, **kwargs):
+        return FakeRoute(), {"openai": FakeStreamingProvider()}
+
+    monkeypatch.setattr(openai_compatible, "_stream_with_fallback", fake_stream_with_fallback)
+    monkeypatch.setattr(openai_compatible, "_resolve_route_and_registry", fake_resolve_route_and_registry)
+
+    fake_session = FakeSession()
+    fake_async_session = FakeAsyncSession(fake_session)
+    app.dependency_overrides[get_async_session] = lambda: fake_async_session
+    client = TestClient(app)
+    with client.stream(
+        "POST",
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer change-me"},
+        json={
+            "model": "proxy-auto",
+            "stream": True,
+            "messages": [{"role": "user", "content": "Stream and fail cleanly."}],
+            "metadata": {"session_id": "sess_stream_failure", "domain_hint": "general"},
+        },
+    ) as response:
+        payload = response.read().decode("utf-8")
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert '"object": "chat.completion.chunk"' in payload
+    assert '"message": "No streaming-capable provider in the selected route or fallback chain succeeded."' in payload
+    assert '"status_code": 502' in payload
+    assert "data: [DONE]" in payload
+
+
 def test_invoke_provider_with_retries_recovers_after_transient_failure(monkeypatch) -> None:
     from app.api import openai_compatible
     from app.config import Settings
@@ -1746,3 +2059,159 @@ def test_chat_completions_routes_research_to_google(monkeypatch) -> None:
     payload = response.json()
     assert payload["model"] == "gemini-2.5-pro"
     assert payload["choices"][0]["message"]["content"] == "Google research answer."
+
+
+def test_request_for_provider_target_adds_cross_node_metadata() -> None:
+    request = openai_compatible.ChatCompletionRequest.model_validate(
+        {
+            "model": "proxy-auto",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "metadata": {"session_id": "sess_handoff"},
+        }
+    )
+
+    class _Route:
+        provider_key = "openai"
+        selected_entry = {
+            "provider_key": "openai",
+            "node_id": "gpu-child-a",
+            "pool_id": "coding-east",
+            "forward_request_metadata": True,
+        }
+        entry_index = {}
+
+        class decision:
+            request_id = "req_current"
+
+    forwarded = openai_compatible._request_for_provider_target(
+        request_id="req_current",
+        request=request,
+        selected_route=_Route(),
+        provider_key="openai",
+        settings=openai_compatible.Settings(llmproxy_node_id="edge-router-1"),
+    )
+
+    assert forwarded.metadata.forwarded_by_proxy is True
+    assert forwarded.metadata.root_request_id == "req_current"
+    assert forwarded.metadata.parent_request_id == "req_current"
+    assert forwarded.metadata.upstream_node_id == "edge-router-1"
+    assert forwarded.metadata.topology_path == ["edge-router-1"]
+    assert forwarded.metadata.routed_pool_id == "coding-east"
+    assert forwarded.metadata.routed_node_id == "gpu-child-a"
+
+
+def test_invoke_with_fallback_can_fail_over_to_concrete_same_provider_entry(monkeypatch) -> None:
+    request = openai_compatible.ChatCompletionRequest.model_validate(
+        {
+            "model": "proxy-auto",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "metadata": {"session_id": "sess_fallback"},
+        }
+    )
+
+    class _Decision:
+        request_id = "req_fallback"
+        selected_entry_id = "entry_a"
+        selected_provider = "openai"
+        selected_provider_family = "OpenAI"
+        selected_model = "gpt-5.5"
+        selected_mode = "production"
+        decision_rationale = "Primary route selected."
+        fallback_chain = [
+            FallbackTarget(
+                order=1,
+                provider="openai",
+                model="gpt-5.5",
+                entry_id="entry_b",
+                pool_id="coding-east",
+                node_id="child-b",
+                node_role="execution",
+                balancing_strategy="session_affinity",
+                affinity_key="session_id",
+            )
+        ]
+        selected_pool_id = "coding-east"
+        selected_node_id = "child-a"
+        selected_node_role = "execution"
+        selected_node_labels = []
+        selected_capacity_class = None
+        selected_balancing_strategy = "session_affinity"
+        selected_affinity_key = "session_id"
+
+    class _Route:
+        provider_key = "openai"
+        selected_entry = {
+            "entry_id": "entry_a",
+            "provider_key": "openai",
+            "model_id": "gpt-5.5",
+            "endpoint_url": "http://child-a:8000/v1",
+            "node_id": "child-a",
+            "node_role": "execution",
+            "pool_id": "coding-east",
+            "forward_request_metadata": True,
+        }
+        entry_index = {
+            "openai": selected_entry,
+            "entry:entry_a": selected_entry,
+            "entry:entry_b": {
+                "entry_id": "entry_b",
+                "provider_key": "openai",
+                "model_id": "gpt-5.5",
+                "endpoint_url": "http://child-b:8000/v1",
+                "node_id": "child-b",
+                "node_role": "execution",
+                "pool_id": "coding-east",
+                "forward_request_metadata": True,
+                "balancing_strategy": "session_affinity",
+                "affinity_key": "session_id",
+            },
+        }
+        decision = _Decision()
+
+    provider_calls: list[str] = []
+
+    def fake_provider_for_route(*, entry_override=None, **_kwargs):
+        class _Provider:
+            provider_family = "OpenAI"
+
+        provider = _Provider()
+        provider.endpoint_url = str((entry_override or _Route.selected_entry).get("endpoint_url"))
+        return provider
+
+    def fake_request_for_provider_target(*, request, **_kwargs):
+        return request
+
+    async def fake_invoke_provider_with_retries(*, provider, **_kwargs):
+        provider_calls.append(provider.endpoint_url)
+        if provider.endpoint_url.endswith("child-a:8000/v1"):
+            raise RuntimeError("primary failed")
+        return {
+            "provider_family": "OpenAI",
+            "provider": "openai",
+            "model": "gpt-5.5",
+            "content": "Fallback answer",
+            "input_tokens": 1,
+            "output_tokens": 1,
+            "cost_estimate": 0.01,
+        }
+
+    monkeypatch.setattr(openai_compatible, "_provider_for_route", fake_provider_for_route)
+    monkeypatch.setattr(openai_compatible, "_request_for_provider_target", fake_request_for_provider_target)
+    monkeypatch.setattr(openai_compatible, "_invoke_provider_with_retries", fake_invoke_provider_with_retries)
+    monkeypatch.setattr(openai_compatible, "is_provider_cooled_down", lambda _provider_key: False)
+
+    provider_result, decision = asyncio.run(
+        openai_compatible._invoke_with_fallback(
+            openai_compatible.Settings(),
+            {"openai": object()},
+            _Route(),
+            request,
+        )
+    )
+
+    assert provider_calls == ["http://child-a:8000/v1", "http://child-b:8000/v1"]
+    assert provider_result["content"] == "Fallback answer"
+    assert decision.selected_mode == "fallback"
+    assert decision.selected_entry_id == "entry_b"
+    assert decision.selected_pool_id == "coding-east"
+    assert decision.selected_node_id == "child-b"

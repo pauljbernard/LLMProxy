@@ -15,6 +15,7 @@ Use this section when you want to install, operate, troubleshoot, and use the sy
 
 - [First Training Workflow](./guides/first-training-workflow.md)
 - [Backend Command Integration](./guides/backend-command-integration.md)
+- [Claude Code Gateway](./guides/claude-code-gateway.md)
 - [Operations Monitoring](./guides/operations-monitoring.md)
 - [Troubleshooting](./guides/troubleshooting.md)
 

@@ -2,8 +2,9 @@
 
 import asyncio
 
-from fastapi import FastAPI, Response
+from fastapi import Depends, FastAPI, Response
 
+from app.api.dependencies import require_admin_listener
 from app.config import get_settings
 from app.api.admin import router as admin_router
 from app.api.datasets import router as datasets_router
@@ -18,6 +19,7 @@ from app.db.session import get_session_factory
 from app.registry.model_registry import get_provider_registry
 from app.services.observability import build_operations_summary
 from app.services.provider_health import provider_health_snapshot
+from app.services.provider_readiness import build_provider_readiness
 from app.services.telemetry import configure_telemetry, prometheus_metrics_content_type, prometheus_metrics_payload
 
 
@@ -29,14 +31,17 @@ def create_app() -> FastAPI:
     @app.get("/health")
     async def health() -> dict[str, object]:
         provider_registry = {}
+        provider_readiness: list[dict[str, object]] = []
         try:
             session = get_session_factory()()
             try:
                 provider_registry = get_provider_registry(settings, session=session)
+                provider_readiness = await build_provider_readiness(settings, session=session)
             finally:
                 session.close()
         except Exception:
             provider_registry = get_provider_registry(settings, session=None)
+            provider_readiness = await build_provider_readiness(settings, session=None)
         ping_results = await asyncio.gather(
             *(provider.healthcheck() for provider in provider_registry.values()),
             return_exceptions=True,
@@ -54,10 +59,11 @@ def create_app() -> FastAPI:
             "redis_configured": bool(settings.llmproxy_redis_url),
             "provider_families_configured": settings.provider_configuration,
             "provider_ping": provider_ping,
+            "provider_readiness": provider_readiness,
             "logs_path": settings.llmproxy_logs_path,
         }
 
-    @app.get("/metrics")
+    @app.get("/metrics", dependencies=[Depends(require_admin_listener)])
     async def metrics() -> dict[str, object]:
         try:
             session = get_session_factory()()
@@ -74,6 +80,7 @@ def create_app() -> FastAPI:
                 "job_counts": {},
                 "event_counts": {},
                 "route_counts": {},
+                "topology_counts": {},
                 "request_count": 0,
                 "recent_error_count": 0,
                 "recent_audit_count": 0,
@@ -83,7 +90,7 @@ def create_app() -> FastAPI:
                 "provider_configuration": settings.provider_configuration,
             }
 
-    @app.get("/metrics/prometheus")
+    @app.get("/metrics/prometheus", dependencies=[Depends(require_admin_listener)])
     async def metrics_prometheus() -> Response:
         return Response(
             content=prometheus_metrics_payload(),

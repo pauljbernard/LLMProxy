@@ -17,11 +17,13 @@ from app.db.models import (
     JobQueueRecord,
     ModelPerformanceSample,
     RequestLog,
+    RoutingDecisionRecord,
 )
 from app.services.provider_health import provider_health_snapshot
 from app.services.mcp_runtime import mcp_runtime_snapshot
 
 OPS_LOG_FILE = "operations.jsonl"
+_REVERSE_READ_CHUNK_SIZE = 8192
 
 
 def _serialize(value: Any) -> Any:
@@ -70,38 +72,86 @@ def tail_log_records(
     settings: Settings,
     *,
     limit: int = 100,
+    offset: int = 0,
     level: str | None = None,
     component: str | None = None,
     category: str | None = None,
+    listener_id: str | None = None,
     audit_only: bool = False,
     errors_only: bool = False,
+    logs_only: bool = False,
 ) -> list[dict[str, Any]]:
     log_path = Path(settings.llmproxy_logs_path) / OPS_LOG_FILE
     if not log_path.exists():
         return []
 
-    records: list[dict[str, Any]] = []
-    with log_path.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line:
-                continue
+    def record_matches(record: dict[str, Any]) -> bool:
+        if level and str(record.get("level")) != level.upper():
+            return False
+        if component and str(record.get("component")) != component:
+            return False
+        if category and str(record.get("category")) != category:
+            return False
+        if listener_id:
+            data = record.get("data") or {}
+            if not isinstance(data, dict):
+                data = {}
+            nested_metadata = data.get("metadata") or {}
+            if not isinstance(nested_metadata, dict):
+                nested_metadata = {}
+            normalized_listener = str(data.get("listener_id") or nested_metadata.get("listener_id") or "").strip().lower()
+            if normalized_listener != str(listener_id).strip().lower():
+                return False
+        if audit_only and not bool(record.get("audit")):
+            return False
+        if errors_only and str(record.get("level")) not in {"ERROR", "CRITICAL"}:
+            return False
+        if logs_only and (bool(record.get("audit")) or str(record.get("level")) in {"ERROR", "CRITICAL"}):
+            return False
+        return True
+
+    target = max(0, offset) + max(0, limit)
+    if target <= 0:
+        return []
+
+    matched: list[dict[str, Any]] = []
+    for record in _iter_log_records_reverse(log_path):
+        if record_matches(record):
+            matched.append(record)
+            if len(matched) >= target:
+                break
+    if not matched:
+        return []
+    return list(reversed(matched[offset:offset + limit]))
+
+
+def _iter_log_records_reverse(log_path: Path):
+    with log_path.open("rb") as handle:
+        handle.seek(0, 2)
+        file_position = handle.tell()
+        buffer = b""
+        while file_position > 0:
+            read_size = min(_REVERSE_READ_CHUNK_SIZE, file_position)
+            file_position -= read_size
+            handle.seek(file_position)
+            chunk = handle.read(read_size)
+            buffer = chunk + buffer
+            lines = buffer.split(b"\n")
+            buffer = lines[0]
+            for raw_line in reversed(lines[1:]):
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    yield json.loads(line.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    continue
+        tail_line = buffer.strip()
+        if tail_line:
             try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if level and str(record.get("level")) != level.upper():
-                continue
-            if component and str(record.get("component")) != component:
-                continue
-            if category and str(record.get("category")) != category:
-                continue
-            if audit_only and not bool(record.get("audit")):
-                continue
-            if errors_only and str(record.get("level")) not in {"ERROR", "CRITICAL"}:
-                continue
-            records.append(record)
-    return records[-limit:]
+                yield json.loads(tail_line.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                return
 
 
 def build_streaming_telemetry(settings: Settings, *, limit: int = 500) -> dict[str, Any]:
@@ -155,6 +205,9 @@ def build_operations_summary(session: Session, *, settings: Settings) -> dict[st
     jobs = list(session.execute(select(JobQueueRecord).order_by(JobQueueRecord.created_at.desc()).limit(200)).scalars())
     events = list(session.execute(select(IntegrationEvent).order_by(IntegrationEvent.occurred_at.desc()).limit(200)).scalars())
     samples = list(session.execute(select(ModelPerformanceSample).order_by(ModelPerformanceSample.created_at.desc()).limit(200)).scalars())
+    routing_decisions = list(
+        session.execute(select(RoutingDecisionRecord).order_by(RoutingDecisionRecord.created_at.desc()).limit(200)).scalars()
+    )
     evaluations = list(session.execute(select(EvaluationRun).order_by(EvaluationRun.created_at.desc()).limit(50)).scalars())
 
     job_counts = {
@@ -176,6 +229,15 @@ def build_operations_summary(session: Session, *, settings: Settings) -> dict[st
             1 for sample in samples if str(sample.route_type).startswith("frontier") or str(sample.route_type) == "fallback"
         ),
         "shadow": sum(1 for sample in samples if str(sample.route_type) == "shadow"),
+        "pooled": sum(1 for decision in routing_decisions if decision.selected_pool_id),
+        "node_routed": sum(1 for decision in routing_decisions if decision.selected_node_id),
+    }
+    topology_counts = {
+        "pooled_routes": sum(1 for decision in routing_decisions if decision.selected_pool_id),
+        "node_routed_routes": sum(1 for decision in routing_decisions if decision.selected_node_id),
+        "training_nodes": sum(1 for decision in routing_decisions if str(decision.selected_node_role or "") == "training"),
+        "execution_nodes": sum(1 for decision in routing_decisions if str(decision.selected_node_role or "") == "execution"),
+        "hybrid_nodes": sum(1 for decision in routing_decisions if str(decision.selected_node_role or "") == "hybrid"),
     }
     latest_request = requests[0].id if requests else None
     latest_evaluation = evaluations[0].id if evaluations else None
@@ -190,6 +252,7 @@ def build_operations_summary(session: Session, *, settings: Settings) -> dict[st
         "job_counts": job_counts,
         "event_counts": event_counts,
         "route_counts": route_counts,
+        "topology_counts": topology_counts,
         "recent_error_count": len(error_logs),
         "recent_audit_count": len(audit_logs),
         "latest_request_id": latest_request,

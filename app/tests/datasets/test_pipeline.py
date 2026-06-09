@@ -48,3 +48,31 @@ def test_split_dataset_is_deterministic() -> None:
     split_two = split_dataset(records)
     assert split_one == split_two
     assert len(split_one["train"]) == 8
+    assert len(split_one["validation"]) == 1
+    assert len(split_one["test"]) == 1
+
+
+def test_split_dataset_preserves_non_empty_validation_for_tiny_dataset() -> None:
+    records = [
+        {"candidate_id": f"cand_{i}", "domain": "coding", "task_type": "code_review", "messages": [], "selected_response": "x"}
+        for i in range(2)
+    ]
+
+    result = split_dataset(records)
+
+    assert len(result["train"]) == 1
+    assert len(result["validation"]) == 1
+    assert len(result["test"]) == 0
+
+
+def test_split_dataset_preserves_all_three_splits_when_possible() -> None:
+    records = [
+        {"candidate_id": f"cand_{i}", "domain": "coding", "task_type": "code_review", "messages": [], "selected_response": "x"}
+        for i in range(3)
+    ]
+
+    result = split_dataset(records)
+
+    assert len(result["train"]) == 1
+    assert len(result["validation"]) == 1
+    assert len(result["test"]) == 1

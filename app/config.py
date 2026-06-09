@@ -3,6 +3,7 @@
 from functools import lru_cache
 from importlib import import_module
 from pathlib import Path
+from typing import Any
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -12,8 +13,11 @@ from sqlalchemy.engine import make_url
 class Settings(BaseSettings):
     llmproxy_env: str = "development"
     llmproxy_log_level: str = "INFO"
+    llmproxy_node_id: str = "llmproxy-local"
     llmproxy_api_host: str = "0.0.0.0"
     llmproxy_api_port: int = 8000
+    llmproxy_inbound_listeners: list[dict[str, object]] = Field(default_factory=list)
+    llmproxy_model_monitors: list[dict[str, object]] = Field(default_factory=list)
     llmproxy_database_url: str = "postgresql+psycopg://llm:llm@localhost:5432/llmproxy"
     llmproxy_redis_url: str = "redis://localhost:6379/0"
     llmproxy_prometheus_metrics_enabled: bool = True
@@ -30,6 +34,9 @@ class Settings(BaseSettings):
     llmproxy_provider_retry_backoff_seconds: float = 0.25
     llmproxy_provider_allowed_fails: int = 3
     llmproxy_provider_cooldown_seconds: int = 60
+    llmproxy_sla_first_response_ms: int = 2000
+    llmproxy_sla_total_response_ms: int = 10000
+    llmproxy_sla_cost_per_request_usd: float = 0.05
     llmproxy_response_cache_enabled: bool = False
     llmproxy_response_cache_ttl_seconds: int = 300
     llmproxy_semantic_cache_enabled: bool = False
@@ -48,6 +55,8 @@ class Settings(BaseSettings):
         ]
     )
     llmproxy_mcp_servers: dict[str, dict[str, object]] = Field(default_factory=dict)
+    llmproxy_a2a_peers: dict[str, dict[str, object]] = Field(default_factory=dict)
+    llmproxy_rest_endpoints: dict[str, dict[str, object]] = Field(default_factory=dict)
     llmproxy_mcp_max_tool_roundtrips: int = 3
     llmproxy_mcp_tool_inventory_ttl_seconds: int = 60
     llmproxy_training_backend_timeout_seconds: int = 14400
@@ -82,7 +91,7 @@ class Settings(BaseSettings):
                 "entry_type": "frontier",
                 "provider_key": "openai",
                 "provider_family": "OpenAI",
-                "model_id": "gpt-5.5",
+                "model_id": "gpt-5",
                 "domains": [],
                 "task_types": [],
                 "deployment_mode": "production",
@@ -93,7 +102,7 @@ class Settings(BaseSettings):
     llmproxy_bearer_token: str = "change-me"
     llmproxy_openai_api_key: str | None = None
     llmproxy_openai_base_url: str = "https://api.openai.com/v1"
-    llmproxy_openai_model: str = "gpt-5.5"
+    llmproxy_openai_model: str = "gpt-5"
     llmproxy_openai_image_model: str = "gpt-image-1"
     llmproxy_openai_transcription_model: str = "whisper-1"
     llmproxy_openai_speech_model: str = "gpt-4o-mini-tts"
@@ -152,17 +161,26 @@ class Settings(BaseSettings):
     llmproxy_azure_openai_api_key: str | None = None
     llmproxy_azure_openai_endpoint: str | None = None
     llmproxy_azure_openai_api_version: str = "2024-10-21"
-    llmproxy_azure_openai_model: str = "gpt-5.5"
+    llmproxy_azure_openai_model: str = "gpt-5"
     llmproxy_ollama_base_url: str = "http://localhost:11434"
     llmproxy_ollama_model: str = "qwen2.5-coder:14b"
+    llmproxy_vllm_base_url: str = "http://localhost:8001/v1"
+    llmproxy_llama_cpp_base_url: str = "http://localhost:8080/v1"
+    llmproxy_mlx_base_url: str = "http://localhost:8081/v1"
+    llmproxy_internal_api_base_url: str = "http://127.0.0.1:8000"
     llmproxy_lora_trainer_command: str | None = None
     llmproxy_qlora_trainer_command: str | None = None
+    llmproxy_unsloth_trainer_command: str | None = None
+    llmproxy_unsloth_studio_enabled: bool = False
+    llmproxy_unsloth_studio_url: str = "http://127.0.0.1:8888"
+    llmproxy_unsloth_studio_internal_url: str = "http://unsloth-studio:8000"
+    llmproxy_unsloth_studio_password: str | None = None
     llmproxy_evaluation_command: str | None = None
     llmproxy_frontier_baseline_names: dict[str, str] = Field(
         default_factory=lambda: {
             "coding": "claude-3-5-sonnet",
             "software_architecture": "claude-3-5-sonnet",
-            "writing_style": "gpt-5.5",
+            "writing_style": "gpt-5",
             "agent_systems": "gemini-2.5-pro",
         }
     )
@@ -282,6 +300,128 @@ class Settings(BaseSettings):
             ),
             "ollama": bool(self.llmproxy_ollama_base_url),
         }
+
+    def configured_inbound_listeners(self) -> list[dict[str, Any]]:
+        listeners = self.llmproxy_inbound_listeners or []
+        if not listeners:
+            return [
+                {
+                    "listener_id": "default",
+                    "name": "Default API Listener",
+                    "host": self.llmproxy_api_host,
+                    "port": self.llmproxy_api_port,
+                    "protocol": "http",
+                    "published_host": "127.0.0.1",
+                    "published_port": self.llmproxy_api_port,
+                    "exposes_admin": True,
+                    "exposes_platform_api": True,
+                    "exposes_proxy": True,
+                }
+            ]
+        normalized: list[dict[str, Any]] = []
+        for index, item in enumerate(listeners):
+            if not isinstance(item, dict):
+                continue
+            try:
+                port = int(item.get("port", self.llmproxy_api_port))
+            except (TypeError, ValueError):
+                port = self.llmproxy_api_port
+            try:
+                published_port = int(item.get("published_port", port))
+            except (TypeError, ValueError):
+                published_port = port
+            listener_id = str(item.get("listener_id") or item.get("id") or f"listener-{index + 1}").strip()
+            host = str(item.get("host") or self.llmproxy_api_host).strip() or self.llmproxy_api_host
+            protocol = str(item.get("protocol") or "http").strip().lower() or "http"
+            published_host = str(item.get("published_host") or "127.0.0.1").strip() or "127.0.0.1"
+            exposes_admin = bool(item.get("exposes_admin", True))
+            exposes_platform_api = bool(item.get("exposes_platform_api", True))
+            exposes_proxy = bool(item.get("exposes_proxy", True))
+            normalized.append(
+                {
+                    "listener_id": listener_id,
+                    "name": str(item.get("name") or listener_id).strip() or listener_id,
+                    "host": host,
+                    "port": port,
+                    "protocol": protocol,
+                    "published_host": published_host,
+                    "published_port": published_port,
+                    "exposes_admin": exposes_admin,
+                    "exposes_platform_api": exposes_platform_api,
+                    "exposes_proxy": exposes_proxy,
+                }
+            )
+        return normalized
+
+    def configured_model_monitors(self) -> list[dict[str, Any]]:
+        monitors = self.llmproxy_model_monitors or []
+        normalized: list[dict[str, Any]] = []
+        for index, item in enumerate(monitors):
+            if not isinstance(item, dict):
+                continue
+            provider_key = str(item.get("provider_key") or "").strip()
+            model_id = str(item.get("model_id") or "").strip()
+            if not provider_key or not model_id:
+                continue
+            try:
+                frequency_minutes = int(item.get("frequency_minutes", 60))
+            except (TypeError, ValueError):
+                frequency_minutes = 60
+            frequency_minutes = min(max(frequency_minutes, 5), 10_080)
+            monitor_mode = str(item.get("monitor_mode") or "frontdoor_stream").strip().lower() or "frontdoor_stream"
+            if monitor_mode not in {"frontdoor_stream", "provider_healthcheck"}:
+                monitor_mode = "frontdoor_stream"
+            monitor_id = str(item.get("monitor_id") or f"monitor-{index + 1}").strip() or f"monitor-{index + 1}"
+            normalized.append(
+                {
+                    "monitor_id": monitor_id,
+                    "label": str(item.get("label") or model_id).strip() or model_id,
+                    "provider_key": provider_key,
+                    "model_id": model_id,
+                    "enabled": bool(item.get("enabled", True)),
+                    "frequency_minutes": frequency_minutes,
+                    "monitor_mode": monitor_mode,
+                    "listener_id": str(item.get("listener_id") or "").strip() or None,
+                    "prompt": str(item.get("prompt") or "Respond with OK.").strip() or "Respond with OK.",
+                }
+            )
+        return normalized
+
+    def admin_inbound_listeners(self) -> list[dict[str, Any]]:
+        listeners = [listener for listener in self.configured_inbound_listeners() if bool(listener.get("exposes_admin"))]
+        return listeners or self.configured_inbound_listeners()[:1]
+
+    def platform_inbound_listeners(self) -> list[dict[str, Any]]:
+        listeners = [listener for listener in self.configured_inbound_listeners() if bool(listener.get("exposes_platform_api"))]
+        return listeners or self.admin_inbound_listeners()
+
+    def proxy_inbound_listeners(self) -> list[dict[str, Any]]:
+        listeners = [listener for listener in self.configured_inbound_listeners() if bool(listener.get("exposes_proxy"))]
+        return listeners or self.configured_inbound_listeners()
+
+    def resolve_inbound_listener(
+        self,
+        *,
+        listener_id: str | None = None,
+        host: str | None = None,
+        port: int | None = None,
+    ) -> dict[str, Any]:
+        listeners = self.configured_inbound_listeners()
+        if listener_id:
+            target = listener_id.strip().lower()
+            for listener in listeners:
+                if str(listener.get("listener_id") or "").strip().lower() == target:
+                    return listener
+        normalized_host = str(host or "").strip().lower()
+        for listener in listeners:
+            listener_host = str(listener.get("host") or "").strip().lower()
+            listener_port = int(listener.get("port") or 0)
+            if port is not None and listener_port != int(port):
+                continue
+            if normalized_host and listener_host not in {normalized_host, "0.0.0.0", "::", "*"}:
+                continue
+            return listener
+        return listeners[0]
 
     @staticmethod
     def _resolve_dotted_callable(path: str):

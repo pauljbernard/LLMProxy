@@ -19,7 +19,10 @@ def record_request(
     session: Session,
     request: ChatCompletionRequest,
     classification: dict[str, str],
+    *,
+    effective_request: ChatCompletionRequest | None = None,
 ) -> RequestLog:
+    effective = effective_request or request
     request_log = RequestLog(
         id=generate_prefixed_id("req"),
         session_id=request.metadata.session_id,
@@ -30,6 +33,7 @@ def record_request(
         complexity=classification["complexity"],
         privacy_level=classification["privacy_level"],
         request_json=request.model_dump(mode="json"),
+        effective_request_json=effective.model_dump(mode="json"),
     )
     session.add(request_log)
     return request_log
@@ -49,6 +53,14 @@ def record_routing_decision(
         selected_provider_family=decision.selected_provider_family,
         selected_model=decision.selected_model,
         selected_mode=decision.selected_mode,
+        selected_entry_id=getattr(decision, "selected_entry_id", None),
+        selected_pool_id=getattr(decision, "selected_pool_id", None),
+        selected_node_id=getattr(decision, "selected_node_id", None),
+        selected_node_role=getattr(decision, "selected_node_role", None),
+        selected_node_labels_json=list(getattr(decision, "selected_node_labels", []) or []),
+        selected_capacity_class=getattr(decision, "selected_capacity_class", None),
+        selected_balancing_strategy=getattr(decision, "selected_balancing_strategy", None),
+        selected_affinity_key=getattr(decision, "selected_affinity_key", None),
         decision_rationale=decision.decision_rationale,
         predicted_cost_class=decision.predicted_cost_class,
         predicted_latency_class=decision.predicted_latency_class,

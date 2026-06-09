@@ -22,3 +22,4 @@ crash.log
 logs/
 .runtime/
 openai-api.key
+anthropic-api.key

@@ -89,6 +89,10 @@ For the Compose stack, see:
 
 - [infra/compose/.env.example](../../infra/compose/.env.example)
 
+For Claude Code gateway usage, see:
+
+- [Claude Code Gateway](../guides/claude-code-gateway.md)
+
 For host-side database tools, use:
 
 - Host: `127.0.0.1`

@@ -146,3 +146,53 @@ def test_ollama_provider_maps_supported_request_parameters() -> None:
 
 async def _collect(stream) -> list[dict[str, object]]:
     return [chunk async for chunk in stream]
+
+
+def test_ollama_healthcheck_requires_configured_model_to_be_installed() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/tags"
+        return httpx.Response(
+            200,
+            json={
+                "models": [
+                    {"name": "gemma3:4b", "model": "gemma3:4b"},
+                ]
+            },
+        )
+
+    provider = OllamaProvider(
+        "qwen2.5-coder:14b",
+        base_url="http://localhost:11434",
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = asyncio.run(provider.healthcheck())
+
+    assert result["ok"] is False
+    assert "not installed" in result["detail"]
+    assert result["installed_model_count"] == 1
+
+
+def test_ollama_healthcheck_passes_when_configured_model_is_installed() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/tags"
+        return httpx.Response(
+            200,
+            json={
+                "models": [
+                    {"name": "gemma3:4b", "model": "gemma3:4b"},
+                ]
+            },
+        )
+
+    provider = OllamaProvider(
+        "gemma3:4b",
+        base_url="http://localhost:11434",
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = asyncio.run(provider.healthcheck())
+
+    assert result["ok"] is True
+    assert result["detail"] == ""
+    assert result["installed_model_count"] == 1

@@ -104,6 +104,52 @@ Example:
 GET /v1/models
 ```
 
+## Anthropic-compatible gateway endpoints
+
+`llmProxy` also exposes an Anthropic-compatible gateway surface intended for clients such as `Claude Code`.
+
+### Messages
+
+```http
+POST /v1/messages
+```
+
+This endpoint accepts Anthropic-style message payloads and routes them through the same `llmProxy` routing, governance, recording, and learning pipeline used by the OpenAI-compatible surface.
+
+Streaming is supported and emitted as Anthropic-style SSE events such as:
+
+- `message_start`
+- `content_block_start`
+- `content_block_delta`
+- `message_delta`
+- `message_stop`
+
+### Count tokens
+
+```http
+POST /v1/messages/count_tokens
+```
+
+This endpoint returns Anthropic-style token estimation:
+
+```json
+{
+  "input_tokens": 123
+}
+```
+
+### Gateway auth
+
+The Anthropic-compatible gateway accepts:
+
+- `Authorization: Bearer <token>`
+- `Authorization: <token>`
+- `X-API-Key: <token>`
+
+See:
+
+- [Claude Code Gateway](../guides/claude-code-gateway.md)
+
 ## Native proxy endpoints
 
 ### Ensemble
