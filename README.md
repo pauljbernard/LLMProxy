@@ -12,6 +12,8 @@ Future coding agents should begin with the documents in `docs/specs/` before sta
 
 The strategic objective of `llmProxy` is to convert repeated high-value frontier-model usage into durable, owned, local capability.
 
+`llmProxy` is not just a gateway that forwards prompts to model vendors. It is a training proxy: it routes traffic, captures valuable interactions, and turns approved work into training and evaluation assets so teams can deliberately reduce ongoing foundation-model spend and retain the resulting small-model capability as their own intellectual property.
+
 This project exists to:
 
 - provide an OpenAI-compatible proxy for existing tools, agents, IDEs, and CLIs
@@ -37,7 +39,7 @@ Recommended starting points:
 - [Quickstart](./docs/guides/quickstart.md)
 - [Operator Console](./docs/guides/operator-console.md)
 - [Admin CLI](./docs/guides/admin-cli.md)
-- [Operations Monitoring](./docs/guides/operations-monitoring.md)
+- [Observability Guide](./docs/guides/operations-monitoring.md)
 - [First Training Workflow](./docs/guides/first-training-workflow.md)
 - [Backend Command Integration](./docs/guides/backend-command-integration.md)
 - [Claude Code Gateway](./docs/guides/claude-code-gateway.md)

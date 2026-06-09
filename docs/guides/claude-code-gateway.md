@@ -33,7 +33,7 @@ For Anthropic direct API routing, that usually means:
 
 ```bash
 export LLMPROXY_ANTHROPIC_API_KEY=your-anthropic-key
-export LLMPROXY_ANTHROPIC_MODEL=claude-3-5-sonnet
+export LLMPROXY_ANTHROPIC_MODEL=claude-sonnet-4-6
 ```
 
 If you intend to route Claude Code traffic somewhere else through policy or fallback, make sure that destination is healthy and reachable instead.
@@ -53,7 +53,7 @@ Point Claude Code at `llmProxy` with:
 ```bash
 export ANTHROPIC_BASE_URL=http://127.0.0.1:8000
 export ANTHROPIC_AUTH_TOKEN=change-me
-export ANTHROPIC_MODEL=claude-3-5-sonnet
+export ANTHROPIC_MODEL=claude-sonnet-4-6
 ```
 
 If you want Claude Code to discover models dynamically from the gateway, also enable:
@@ -74,7 +74,7 @@ curl http://127.0.0.1:8000/v1/messages/count_tokens \
   -H 'content-type: application/json' \
   -H 'anthropic-version: 2023-06-01' \
   -d '{
-    "model": "claude-3-5-sonnet",
+    "model": "claude-sonnet-4-6",
     "max_tokens": 64,
     "messages": [
       {"role": "user", "content": "hello from Claude Code"}
@@ -90,7 +90,7 @@ curl http://127.0.0.1:8000/v1/messages \
   -H 'content-type: application/json' \
   -H 'anthropic-version: 2023-06-01' \
   -d '{
-    "model": "claude-3-5-sonnet",
+    "model": "claude-sonnet-4-6",
     "max_tokens": 128,
     "messages": [
       {"role": "user", "content": "Say hello in one sentence."}
@@ -106,7 +106,7 @@ curl http://127.0.0.1:8000/v1/messages \
   -H 'content-type: application/json' \
   -H 'anthropic-version: 2023-06-01' \
   -d '{
-    "model": "claude-3-5-sonnet",
+    "model": "claude-sonnet-4-6",
     "stream": true,
     "max_tokens": 128,
     "messages": [
@@ -132,7 +132,7 @@ Claude Code only knows it is talking to an Anthropic-compatible gateway. It does
 - a local fallback
 - another routed target
 
-So a successful Claude Code request proves the gateway surface works, but it does not by itself prove the request landed on Anthropic. Use `Observability > Traffic` and request detail to confirm the actual selected provider and model.
+So a successful Claude Code request proves the gateway surface works, but it does not by itself prove the request landed on Anthropic. Use `Observability > Events` with the `Traffic` preset and request detail to confirm the actual selected provider and model.
 
 ## Troubleshooting
 

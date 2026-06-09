@@ -113,7 +113,7 @@ The evaluation command receives JSON like:
       "prompt": "Review a small bug fix patch."
     }
   ],
-  "frontier_baseline_name": "claude-3-5-sonnet"
+  "frontier_baseline_name": "claude-sonnet-4-6"
 }
 ```
 

@@ -25,17 +25,17 @@ Then:
    - session id
    - domain hint such as `coding`
    - task type hint such as `code_review`
-4. Open `Candidates, Datasets & Training`
+4. Open `Data Pipeline`
 5. Approve the new candidate
 6. Create an export for that domain
 7. Use the export row action to fill the dataset import form
 8. Run dataset import
 9. Use the dataset version row action to fill the training form
-10. Run training
-11. Use the training row action to fill the evaluation form
-12. Run evaluation
-13. Open `Evaluation & KPI`
-14. Use the evaluation row action to prepare deployment
+10. Open `Training > Runs & Evaluation`
+11. Run training
+12. Use the training row action to fill the evaluation form
+13. Run evaluation
+14. Open `Models > Deploy` to prepare route exposure or deployment follow-up
 
 ## Option 2: use the CLI
 
@@ -58,7 +58,21 @@ After a successful run, you should see:
 - dataset split files under `/data/datasets`
 - training artifacts under `/data/checkpoints`
 - model package under `/data/models`
-- evaluation and KPI information available through the admin console and APIs
+- evaluation information under `Training > Runs & Evaluation`
+- KPI and runtime oversight under `Training > Runtime & KPI`
+
+## Why this workflow matters
+
+This workflow is the clearest illustration that `llmProxy` is a training proxy rather than only an inference proxy.
+
+The same control plane that routes production traffic also:
+
+- captures reusable candidate work
+- turns approved work into datasets
+- runs training and evaluation
+- prepares smaller owned specialists to take over appropriate classes of work
+
+That is the mechanism for reducing repeated foundation-model costs while retaining the resulting domain-specific capability as internal intellectual property.
 
 ## Real backend note
 

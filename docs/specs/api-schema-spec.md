@@ -162,7 +162,7 @@ Minimum response shape:
       "response_id": "resp_1",
       "provider": "anthropic",
       "provider_family": "Anthropic",
-      "model": "claude-3-5-sonnet",
+      "model": "claude-sonnet-4-6",
       "content": "string",
       "score": 0.95,
       "rationale": "string"
@@ -173,7 +173,7 @@ Minimum response shape:
     "judge_model": "heuristic-v1",
     "selected_response_id": "resp_1",
     "selected_provider": "anthropic",
-    "selected_model": "claude-3-5-sonnet",
+    "selected_model": "claude-sonnet-4-6",
     "rationale": "string",
     "scores": {
       "resp_1": 0.98
@@ -350,7 +350,7 @@ Evaluation submission request shape:
 ```json
 {
   "training_run_id": "train_123",
-  "frontier_baseline_name": "claude-3-5-sonnet"
+  "frontier_baseline_name": "claude-sonnet-4-6"
 }
 ```
 
@@ -361,7 +361,7 @@ Evaluation submission response shape:
   "evaluation_run_id": "eval_123",
   "training_run_id": "train_123",
   "domain": "coding",
-  "frontier_baseline_name": "claude-3-5-sonnet",
+  "frontier_baseline_name": "claude-sonnet-4-6",
   "overall_score": 0.9,
   "quality_delta_vs_frontier": 0.02,
   "value_per_dollar_gain_vs_frontier": 4.1,
@@ -381,7 +381,7 @@ Representative evaluation run list item:
   "id": "eval_123",
   "training_run_id": "train_123",
   "domain": "coding",
-  "frontier_baseline_name": "claude-3-5-sonnet",
+  "frontier_baseline_name": "claude-sonnet-4-6",
   "overall_score": 0.9,
   "quality_delta_vs_frontier": 0.02,
   "value_per_dollar_gain_vs_frontier": 4.1,
